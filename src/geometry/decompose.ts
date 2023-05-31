@@ -1,132 +1,239 @@
 import { ReadonlyVec2, ReadonlyVec3, mat4, vec2, vec3 } from "gl-matrix";
-import { Face } from "./face";
+import { ConvexPolygon, Face, faceContainsPoint } from "./face";
 import { Shape } from "./shape";
-import { Triangle3 } from "./triangle3";
-import { Line } from "./line";
+import { Line, lineIntersection } from "./line";
+import { Plane } from "./plane";
+import { EPSILON, NORMAL_X, NORMAL_Z } from "./constants";
 
-export function decompose(shape: Shape): readonly Triangle3[] {
-  const faces = decomposeShapeToFaces(shape);
-  return [];
+export function decompose(shapes: Shape[]): readonly [Face, readonly ConvexPolygon[]][] {
+  const faces = decomposeShapesToFaces(shapes);
+  // break faces up by lines
+  return faces.map(face => {
+    const allPolygons = decomposeConvexPolygon(face.polygon.value, face.lines);
+    const polygons = allPolygons
+      .filter(polygon => {
+        const midpoint = polygon.reduce(([x, y], [px, py]) => {
+          return [x + px/polygon.length, y + py/polygon.length, 0];
+        }, [0, 0, 0])
+        return faceContainsPoint(face.polygon, midpoint);
+      });
+    return [face, polygons];
+  });
 }
 
-const NORMAL_X: ReadonlyVec3 = [1, 0, 0];
-const NORMAL_Z: ReadonlyVec3 = [0, 0, 1];
-const EPSILON = 0.0001;
 
-export function decomposeShapeToFaces(shape: Shape): readonly Face[] {
-  
-  // break the shape into faces
-  const faces = shape.value.map<Face[]>(([direction, offset]) => {
-    const cosRadians = vec3.dot(NORMAL_Z, direction);
-    const translate = mat4.translate(
-      mat4.create(),
-      mat4.identity(mat4.create()),
-      offset,
-    );
-    const axis = Math.abs(cosRadians) < 1 - EPSILON 
-        ? vec3.normalize(
-          vec3.create(),
-          vec3.cross(vec3.create(), NORMAL_Z, direction),
-        ) 
-        : NORMAL_X;
-    const rotate = mat4.rotate(
-      mat4.create(), 
-      mat4.identity(mat4.create()),
-      Math.acos(cosRadians),
-      axis,
-    );
-    const transform = mat4.multiply(mat4.create(), translate, rotate);
-    //const transform = rotate;
-    const inverseRotate = mat4.invert(mat4.create(), rotate);
-    const inverse = mat4.invert(mat4.create(), transform);
-    const lines = shape.value.map<Line[]>(([compareDirection, compareOffset]) => {
-      const rotatedCompareNormal = vec3.transformMat4(
-        vec3.create(),
-        compareDirection,
-        inverseRotate,
+export function decomposeShapesToFaces(shapes: Shape[]): readonly Face[] {
+  return shapes.map(shape => {
+    // break the shape into faces
+    const faces = shape.value.map<Face[]>(([direction, offset]) => {
+      const cosRadians = vec3.dot(NORMAL_Z, direction);
+      const translate = mat4.translate(
+        mat4.create(),
+        mat4.identity(mat4.create()),
+        offset,
       );
-      if (Math.abs(rotatedCompareNormal[2]) > 1 - EPSILON) {
+      const axis = Math.abs(cosRadians) < 1 - EPSILON 
+          ? vec3.normalize(
+            vec3.create(),
+            vec3.cross(vec3.create(), NORMAL_Z, direction),
+          ) 
+          : NORMAL_X;
+      const rotate = mat4.rotate(
+        mat4.create(), 
+        mat4.identity(mat4.create()),
+        Math.acos(cosRadians),
+        axis,
+      );
+      const transform = mat4.multiply(mat4.create(), translate, rotate);
+      const inverseRotate = mat4.invert(mat4.create(), rotate);
+      const inverse = mat4.invert(mat4.create(), transform);
+      const lines = calculateLines(shape.value, inverseRotate, inverse);
+      const perimeter = calculateConvexPerimeter(lines);
+      // ignore any empty shapes
+      if (perimeter.length < 3) {
         return [];
       }
-      const rotatedCompareOffset = vec3.transformMat4(
-        vec3.create(),
-        compareOffset,
-        inverse,
-      );
-      // work out the intersection line of this plane with the current plane
-      const intersectionDirection = vec3.normalize(
-        vec3.create(), 
-        vec3.cross(vec3.create(), rotatedCompareNormal, NORMAL_Z),
-      );
-      const planeDirection = vec3.normalize(
-        vec3.create(),
-        vec3.cross(vec3.create(), intersectionDirection, rotatedCompareNormal),
-      );
-      const intersectionProportion = rotatedCompareOffset[2]/planeDirection[2];
-      const intersectionPoint = rotatedCompareOffset.map((v, i) => (
-        v - intersectionProportion * planeDirection[i]
-      ));
-      // NOTE: these are actually vec3s
-      return [[
-        intersectionDirection as ReadonlyVec2,
-        intersectionPoint as ReadonlyVec2,
-      ]];
-    }).flat(1);
 
-    // work out the intersections
-    const intersections = lines.map<([number, ReadonlyVec3] | 0)>(line => {
-      let maxD: number | undefined;
-      let maxLineIndex: number | undefined;
-      const [[nx2, ny2], [px2, py2]] = line;
-      lines.forEach((compare, compareIndex) => {
-        const [[nx1, ny1], [px1, py1]] = compare; 
-        const cosAngle = vec2.dot([-ny2, nx2], [nx1, ny1]);
-        if (cosAngle > EPSILON) {
-          const d = (nx1 * py2 - nx1 * py1 - ny1 * px2 + ny1 * px1)/(ny1 * nx2 - nx1 * ny2);
-          if (!(d < maxD)) {
-            maxD = d;
-            maxLineIndex = compareIndex;
-          }
+      const siblingSubtractions = shapes.map(sibling => {
+        if (shape == sibling) {
+          return [];
         }
-      });
-      return maxD < 0
-        ? [maxLineIndex, [px2 + nx2 * maxD, py2 + ny2 * maxD, 0]]
-        : 0;
-    });
+        const siblingLines = calculateLines(sibling.value, inverseRotate, inverse);
+        const perimeter = calculateConvexPerimeter(siblingLines);
+        lines.push(...siblingLines);
+        // TODO check if the sibling actually intersects us at all, in which case, we don't need 
+        // to add this perimeter
+        if (perimeter.length < 3) {
+          return [];
+        }
+        return {
+          value: perimeter,
+          subtractions: [],
+        };
+      }).flat(1);
 
-    // walk the perimeter
-    let intersection = intersections.find(i => i);
-    let startIndex = -1;
-    const perimeterIntersections: [number, ReadonlyVec3][] = [];
-    while (intersection && startIndex < 0) {
-      const nextIntersection = intersections[intersection[0]];
-      perimeterIntersections.push(intersection);
-      intersection = nextIntersection;
-      startIndex = perimeterIntersections.indexOf(
-        intersection as [number, ReadonlyVec3],
-      );
-    }
-    // trim off any non circular bits
-    perimeterIntersections.splice(0, startIndex);
-    // ignore any empty shapes
-    if (perimeterIntersections.length < 3) {
-      return [];
-    }
-    // convert to points
-    const perimeter = perimeterIntersections.map(
-      intersection => intersection[1],
-    );
-    const face: Face = {
-      lines,
-      polygon: {
-        subtractions: [],
-        value: perimeter,
-      },
-      transform,
-    };
-    return [face];
-  }).flat(1);
-  return faces;
+      const face: Face = {
+        lines,
+        polygon: {
+          subtractions: siblingSubtractions,
+          value: perimeter,
+        },
+        transform,
+      };
+      return [face];
+    });
+    return faces;
+  }).flat(2);
 }
 
+function calculateLines(planes: readonly Plane[], inverseRotate: mat4, inverse: mat4): Line[] {
+  return planes.map<Line[]>(([compareDirection, compareOffset]) => {
+    const rotatedCompareNormal = vec3.transformMat4(
+      vec3.create(),
+      compareDirection,
+      inverseRotate,
+    );
+    if (Math.abs(rotatedCompareNormal[2]) > 1 - EPSILON) {
+      return [];
+    }
+    const rotatedCompareOffset = vec3.transformMat4(
+      vec3.create(),
+      compareOffset,
+      inverse,
+    );
+    // work out the intersection line of this plane with the current plane
+    const intersectionDirection = vec3.normalize(
+      vec3.create(), 
+      vec3.cross(vec3.create(), rotatedCompareNormal, NORMAL_Z),
+    );
+    const planeDirection = vec3.normalize(
+      vec3.create(),
+      vec3.cross(vec3.create(), intersectionDirection, rotatedCompareNormal),
+    );
+    const intersectionProportion = rotatedCompareOffset[2]/planeDirection[2];
+    const intersectionPoint = rotatedCompareOffset.map((v, i) => (
+      v - intersectionProportion * planeDirection[i]
+    ));
+    // NOTE: these are actually vec3s
+    return [[
+      intersectionDirection as ReadonlyVec2,
+      intersectionPoint as ReadonlyVec2,
+    ]];
+  }).flat(1);
+}
+
+function calculateConvexPerimeter(lines: readonly Line[]) {
+  // work out the intersections
+  const intersections = lines.map<([number, ReadonlyVec3] | 0)>(line => {
+    let maxD: number | undefined;
+    let maxLineIndex: number | undefined;
+    const [[nx2, ny2], [px2, py2]] = line;
+    lines.forEach((compare, compareIndex) => {
+      const [[nx1, ny1], [px1, py1]] = compare; 
+      const cosAngle = vec2.dot([-ny2, nx2], [nx1, ny1]);
+      if (cosAngle > EPSILON) {
+        const d = (nx1 * py2 - nx1 * py1 - ny1 * px2 + ny1 * px1)/(ny1 * nx2 - nx1 * ny2);
+        if (!(d < maxD)) {
+          maxD = d;
+          maxLineIndex = compareIndex;
+        }
+      }
+    });
+    return maxD != null
+      ? [maxLineIndex, [px2 + nx2 * maxD, py2 + ny2 * maxD, 0]]
+      : 0;
+  });
+
+  // walk the perimeter
+  let intersection = intersections.find(i => i);
+  let startIndex = -1;
+  const perimeterIntersections: [number, ReadonlyVec3][] = [];
+  while (intersection && startIndex < 0) {
+    const nextIntersection = intersections[intersection[0]];
+    perimeterIntersections.push(intersection);
+    intersection = nextIntersection;
+    startIndex = perimeterIntersections.indexOf(
+      intersection as [number, ReadonlyVec3],
+    );
+  }
+  // trim off any non circular bits
+  perimeterIntersections.splice(0, startIndex);
+  // convert to points
+  const perimeter = perimeterIntersections.map(
+    intersection => intersection[1],
+  );
+  return perimeter;
+}
+
+function decomposeConvexPolygon(polygon: ConvexPolygon, lines: readonly Line[]): ConvexPolygon[] {
+  // find a line that bisects the polygon
+  const intersectionPointsAndIndices = lines.map(line => {
+    const intersections = polygon.map<[number, ReadonlyVec3][]>((p0, i) => {
+      const i1 = (i + 1) % polygon.length;
+      const p1 = polygon[i1];
+      const p2 = polygon[(i + 2) % polygon.length];
+      const prevDelta = vec3.subtract(vec3.create(), p1, p0);
+      const prevLength = vec3.length(prevDelta);
+      const prevDirection = vec3.normalize(vec3.create(), prevDelta);
+      const prevEdge: Line = [
+        prevDirection as ReadonlyVec2,
+        p0 as ReadonlyVec2,
+      ];
+      const prevIntersectionD = lineIntersection(prevEdge, line);
+      const nextDelta = vec3.subtract(vec3.create(), p2, p1);
+      const nextLength = vec3.length(nextDelta);
+      const nextDirection = vec3.normalize(vec3.create(), nextDelta);
+      const nextEdge: Line = [
+        nextDirection as ReadonlyVec2,
+        p1 as ReadonlyVec2,
+      ];
+      const nextIntersectionD = lineIntersection(nextEdge, line);
+      if (
+        // the line is parallel
+        nextIntersectionD == null
+        // the previous line is parallel and we are near the point
+        || prevIntersectionD == null && nextIntersectionD < EPSILON
+        // the intersection is off the end of the line
+        || nextIntersectionD > nextLength - EPSILON
+        // the intersection is counted against the previous edge
+        // TODO a null previous intersection will count as false, so this null
+        // check technically isn't required
+        || prevIntersectionD != null && prevIntersectionD > prevLength - EPSILON
+      ) {
+        return [];
+      }
+      const intersectionPoint = vec3.add(
+        vec3.create(),
+        p1,
+        vec3.scale(vec3.create(), nextDirection, nextIntersectionD)
+      );
+      return [[i1, intersectionPoint]];
+    }).flat(1);
+    if (intersections.length == 2) {
+      return intersections;
+    }
+    return [];
+  }).flat(1);
+  if (intersectionPointsAndIndices.length) {
+    // bisect
+    const [[i1, p1], [i2, p2]] = intersectionPointsAndIndices;
+    const poly1: ConvexPolygon = [
+      p1,
+      ...polygon.slice(i1+1, i2 > i1 ? i2 + 1 : polygon.length),
+      ...polygon.slice(0, i2 > i1 ? 0 : i2 + 1),
+      p2,
+    ];
+    const poly2: ConvexPolygon = [
+      p2,
+      ...polygon.slice(i2+1, i2 > i1 ? polygon.length : i1 + 1),
+      ...polygon.slice(0, i2 > i1 ? i1 + 1 : 0),
+      p1,
+    ];
+    // TODO deduplicate points
+    return [poly1, poly2].map(
+      poly => decomposeConvexPolygon(poly, lines)
+    ).flat(1);
+  }
+  return [polygon];
+}
 

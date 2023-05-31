@@ -1,7 +1,7 @@
 import { Shape } from "./geometry/shape";
 import { toPlane } from "./geometry/plane";
-import { decompose, decomposeShapeToFaces } from "./geometry/decompose";
-import { ReadonlyVec4, mat4, vec3, vec4 } from "gl-matrix";
+import { decompose, decomposeShapesToFaces } from "./geometry/decompose";
+import { ReadonlyVec3, ReadonlyVec4, mat4, vec3, vec4 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 
 const A_VERTEX_POSITION = "aVertexPosition";
@@ -40,25 +40,40 @@ const FRAGMENT_SHADER = `#version 300 es
 `;
 
 window.onload = () => {
-  const px = toPlane(1, 1, 0, 1);
-  const px2 = toPlane(1, -1, 0, 1);
-  const nx = toPlane(-1, 0, 0, 1);
-  const py = toPlane(0, 1, 0, 1);
-  const ny = toPlane(0, -1, 0, 1);
-  const pz = toPlane(0, 0, 1, 1);
-  const nz = toPlane(0, 0, -1, 1);
-
-  const shape: Shape = {
-    value: [px, px2, nx, py, ny, pz, nz],
+  const shape1: Shape = {
+    value: [
+      // toPlane(1, 1, 0, 1),
+      // toPlane(1, -1, 0, 1),
+      toPlane(1, 0, 0, 1),
+      toPlane(-1, 0, 0, 1),
+      toPlane(0, 1, 0, 1),
+      toPlane(0, -1, 0, 1),
+      toPlane(0, 0, 1, 1),
+      toPlane(0, 0, -1, 1),
+    ],
     subtractions: [],
   };
+  const shape2: Shape = {
+    subtractions: [],
+    value: [
+      toPlane(1, 0, 0, .2),
+      toPlane(-1, 0, 0, .2),
+      toPlane(0, 1, 0, .2),
+      toPlane(0, -1, 0, .2),
+      toPlane(0, 0, 1, 1.2),
+      toPlane(0, 0, -1, -.8),
+    ],
+  };
 
-  const faces = decomposeShapeToFaces(shape);
-  console.log(faces);
-  console.log(faces.map(face => (
-    face.polygon.value.map(point => (
-      vec3.transformMat4(vec3.create(), point, face.transform)
-    ))
+  const faces = decomposeShapesToFaces([shape1, shape2]);
+  const facesToPolygons = decompose([shape2, shape1]);
+  console.log(facesToPolygons);
+  console.log(facesToPolygons.map(([face, polygons]) => (
+    polygons.map(polygon => {
+      return polygon.map(point => (
+        vec3.transformMat4(vec3.create(), point, face.transform)
+      ));
+    })
   )));
 
   const canvas = document.getElementById("canvas") as HTMLCanvasElement;
@@ -116,8 +131,35 @@ window.onload = () => {
   ].map(
     uniform => gl.getUniformLocation(program, uniform)
   );
+  const points = facesToPolygons.map(([face, polygons]) => {
+    return polygons.map(polygon => {
+      return polygon.map<[number, number, number, number]>(point => {
+        return [
+          ...vec3.transformMat4(vec3.create(), point, face.transform),
+          1,
+        ] as any;
+      });
+    });
+  }).flat(2);
+  const colors = facesToPolygons.map(([_, polygons], j) => {
+    return polygons.map((polygon, i) => {
+      const color = COLORS[(j+i) % COLORS.length];
+      return polygon.map<[number, number, number, number]>(() => {
+        return [...color] as any;
+      });
+    });
+  }).flat(2);
+  const [indices] = facesToPolygons.reduce<[number[], number]>((acc, [_, polygons]) => {
+    return polygons.reduce(([indices, offset], polygon) => {
+      const newIndices = polygon.slice(2).map((_, i) => {
+        return [offset, offset + i + 1, offset + i + 2];
+      }).flat(1);
+      return [[...indices, ...newIndices], offset + polygon.length];
+    }, acc);
+  }, [[], 0]);
 
 
+  /*
   const points = faces.map(face => {
     return face.polygon.value.map(point => (
       [...vec3.transformMat4(vec3.create(), point, face.transform), 1]
@@ -125,7 +167,9 @@ window.onload = () => {
   }).flat(1);
   const colors = faces.map((face, i) => {
     const color = COLORS[i % COLORS.length];
-    return face.polygon.value.map(() => [...color]);
+    return face.polygon.value.map((_, i) => {
+      return [...color]
+    });
   }).flat(1);
   const [indices] = faces.reduce<[number[], number]>(([indices, offset], face) => {
     const newIndices = face.polygon.value.slice(2).map((_, i) => {
@@ -133,6 +177,7 @@ window.onload = () => {
     }).flat(1);
     return [[...indices, ...newIndices], offset + face.polygon.value.length];
   }, [[], 0]);
+  */
 
   var vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
@@ -155,6 +200,8 @@ window.onload = () => {
   gl.viewport(0, 0, canvas.clientWidth, canvas.clientHeight);
   gl.enable(gl.DEPTH_TEST);
   gl.clearColor(0, 0, 0, 1);
+  gl.enable(gl.CULL_FACE);
+  gl.cullFace(gl.BACK);
 
   let rotation = 0;
   function animate() {
