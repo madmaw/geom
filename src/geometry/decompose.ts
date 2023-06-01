@@ -1,83 +1,56 @@
 import { ReadonlyVec2, ReadonlyVec3, mat4, vec2, vec3 } from "gl-matrix";
 import { ConvexPolygon, Face, faceContainsPoint } from "./face";
-import { Shape } from "./shape";
+import { Shape, shapeContainsPoint } from "./shape";
 import { Line, lineIntersection } from "./line";
-import { Plane } from "./plane";
-import { EPSILON, NORMAL_X, NORMAL_Z } from "./constants";
+import { Plane, planeToTransforms } from "./plane";
+import { EPSILON, NORMAL_Z } from "./constants";
 
-export function decompose(shapes: Shape[]): readonly [Face, readonly ConvexPolygon[]][] {
-  const faces = decomposeShapesToFaces(shapes);
-  // break faces up by lines
-  return faces.map(face => {
-    const allPolygons = decomposeConvexPolygon(face.polygon.value, face.lines);
-    const polygons = allPolygons
-      .filter(polygon => {
-        const midpoint = polygon.reduce(([x, y], [px, py]) => {
-          return [x + px/polygon.length, y + py/polygon.length, 0];
-        }, [0, 0, 0])
-        return faceContainsPoint(face.polygon, midpoint);
-      });
-    return [face, polygons];
-  });
+export function decompose(shapes: readonly Shape[]): readonly Face[] {
+  const allPlanes = decomposeShapesToPlanes(shapes);
+  const faces = decomposeShapesToFaces(shapes, allPlanes);
+  return faces;
 }
 
+export function decomposeShapesToPlanes(shapes: readonly Shape[]): readonly Plane[] {
+  return shapes.map(shape => {
+    return [...shape.value, ...decomposeShapesToPlanes(shape.subtractions)];
+  }).flat(1);
+}
 
-export function decomposeShapesToFaces(shapes: Shape[]): readonly Face[] {
+export function decomposeShapesToFaces(
+  shapes: readonly Shape[],
+  allPlanes: readonly Plane[],
+): readonly Face[] {
   return shapes.map(shape => {
     // break the shape into faces
-    const faces = shape.value.map<Face[]>(([direction, offset]) => {
-      const cosRadians = vec3.dot(NORMAL_Z, direction);
-      const translate = mat4.translate(
-        mat4.create(),
-        mat4.identity(mat4.create()),
-        offset,
-      );
-      const axis = Math.abs(cosRadians) < 1 - EPSILON 
-          ? vec3.normalize(
-            vec3.create(),
-            vec3.cross(vec3.create(), NORMAL_Z, direction),
-          ) 
-          : NORMAL_X;
-      const rotate = mat4.rotate(
-        mat4.create(), 
-        mat4.identity(mat4.create()),
-        Math.acos(cosRadians),
-        axis,
-      );
+    const faces = shape.value.map<Face[]>(plane => {
+      const [translate, rotate] = planeToTransforms(plane);
       const transform = mat4.multiply(mat4.create(), translate, rotate);
       const inverseRotate = mat4.invert(mat4.create(), rotate);
       const inverse = mat4.invert(mat4.create(), transform);
       const lines = calculateLines(shape.value, inverseRotate, inverse);
-      const perimeter = calculateConvexPerimeter(lines);
+      const polygon = calculateConvexPerimeter(lines);
       // ignore any empty shapes
-      if (perimeter.length < 3) {
+      if (polygon.length < 3) {
         return [];
       }
 
-      const siblingSubtractions = shapes.map(sibling => {
-        if (shape == sibling) {
-          return [];
-        }
-        const siblingLines = calculateLines(sibling.value, inverseRotate, inverse);
-        const perimeter = calculateConvexPerimeter(siblingLines);
-        lines.push(...siblingLines);
-        // TODO check if the sibling actually intersects us at all, in which case, we don't need 
-        // to add this perimeter
-        if (perimeter.length < 3) {
-          return [];
-        }
-        return {
-          value: perimeter,
-          subtractions: [],
-        };
-      }).flat(1);
+      // break up the polygon into smallest possible parts
+      const allLines = calculateLines(allPlanes, inverseRotate, inverse);
+      const polygons = decomposeConvexPolygon(polygon, allLines)
+        .filter(polygon => {
+          // remove any polygons that exist within a known shape
+          const average = polygon.reduce(([ax, ay], [x, y]) => {
+            return [ax + x/polygon.length, ay + y/polygon.length, 0];
+          }, [0, 0, 0]);
+          const worldAverage = vec3.transformMat4(vec3.create(), average, transform);
+          return shapes.every(container => {
+            return shape == container || !shapeContainsPoint(container, worldAverage);
+          });
+        });
 
       const face: Face = {
-        lines,
-        polygon: {
-          subtractions: siblingSubtractions,
-          value: perimeter,
-        },
+        polygons,
         transform,
       };
       return [face];
@@ -198,7 +171,7 @@ function decomposeConvexPolygon(polygon: ConvexPolygon, lines: readonly Line[]):
         // the intersection is counted against the previous edge
         // TODO a null previous intersection will count as false, so this null
         // check technically isn't required
-        || prevIntersectionD != null && prevIntersectionD > prevLength - EPSILON
+        || prevIntersectionD != null && prevIntersectionD < prevLength - EPSILON
       ) {
         return [];
       }

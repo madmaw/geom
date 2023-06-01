@@ -4,8 +4,7 @@ import { Line, lineIntersection } from "./line";
 
 export type Face = {
   readonly transform: ReadonlyMat4,
-  readonly polygon: Subtraction<ConvexPolygon>,
-  readonly lines: readonly Line[],
+  readonly polygons: readonly ConvexPolygon[],
 };
 
 // the expectation is that z is always 0

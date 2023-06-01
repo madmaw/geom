@@ -1,8 +1,9 @@
 import { Shape } from "./geometry/shape";
 import { toPlane } from "./geometry/plane";
-import { decompose, decomposeShapesToFaces } from "./geometry/decompose";
-import { ReadonlyVec3, ReadonlyVec4, mat4, vec3, vec4 } from "gl-matrix";
+import { decompose } from "./geometry/decompose";
+import { ReadonlyVec2, ReadonlyVec3, ReadonlyVec4, mat4, vec2, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
+import { EPSILON } from "./geometry/constants";
 
 const A_VERTEX_POSITION = "aVertexPosition";
 const A_VERTEX_COLOR = "aVertexColor";
@@ -42,14 +43,14 @@ const FRAGMENT_SHADER = `#version 300 es
 window.onload = () => {
   const shape1: Shape = {
     value: [
-      // toPlane(1, 1, 0, 1),
-      // toPlane(1, -1, 0, 1),
+      toPlane(0, 0, 1, 1),
+      toPlane(0, 0, -1, 1),
+      toPlane(1, 1, 0, 1),
+      toPlane(1, -1, 0, 1),
       toPlane(1, 0, 0, 1),
       toPlane(-1, 0, 0, 1),
       toPlane(0, 1, 0, 1),
       toPlane(0, -1, 0, 1),
-      toPlane(0, 0, 1, 1),
-      toPlane(0, 0, -1, 1),
     ],
     subtractions: [],
   };
@@ -61,17 +62,31 @@ window.onload = () => {
       toPlane(0, 1, 0, .2),
       toPlane(0, -1, 0, .2),
       toPlane(0, 0, 1, 1.2),
-      toPlane(0, 0, -1, -.8),
+      toPlane(0, 0, -1, 0),
     ],
   };
 
-  const faces = decomposeShapesToFaces([shape1, shape2]);
-  const facesToPolygons = decompose([shape2, shape1]);
-  console.log(facesToPolygons);
-  console.log(facesToPolygons.map(([face, polygons]) => (
+  const shape3: Shape = {
+    value: [
+      toPlane(1, 1, 0, .5),
+      toPlane(1, 0, 0, .5),
+      toPlane(-1, 0, 0, .5),
+      toPlane(0, 1, 0, .5),
+      toPlane(0, -1, 0, .5),
+      toPlane(0, 0, 1, 1),
+      toPlane(0, 0, -1, 1),
+    ],
+    subtractions: [],
+  };
+
+
+  const faces = decompose([shape1, shape2]);
+  //const faces = decompose([shape1]);
+  console.log(faces);
+  console.log(faces.map(({ polygons, transform }) => (
     polygons.map(polygon => {
       return polygon.map(point => (
-        vec3.transformMat4(vec3.create(), point, face.transform)
+        vec3.transformMat4(vec3.create(), point, transform)
       ));
     })
   )));
@@ -131,25 +146,26 @@ window.onload = () => {
   ].map(
     uniform => gl.getUniformLocation(program, uniform)
   );
-  const points = facesToPolygons.map(([face, polygons]) => {
+  const points = faces.map(({ polygons, transform }) => {
     return polygons.map(polygon => {
       return polygon.map<[number, number, number, number]>(point => {
         return [
-          ...vec3.transformMat4(vec3.create(), point, face.transform),
+          ...vec3.transformMat4(vec3.create(), point, transform),
           1,
         ] as any;
       });
     });
   }).flat(2);
-  const colors = facesToPolygons.map(([_, polygons], j) => {
+  const colors = faces.map(({ polygons }, j) => {
     return polygons.map((polygon, i) => {
-      const color = COLORS[(j+i) % COLORS.length];
+      //const color = COLORS[(j+i) % COLORS.length];
+      const color = [Math.random(), Math.random(), Math.random(), 1];
       return polygon.map<[number, number, number, number]>(() => {
         return [...color] as any;
       });
     });
   }).flat(2);
-  const [indices] = facesToPolygons.reduce<[number[], number]>((acc, [_, polygons]) => {
+  const [indices] = faces.reduce<[number[], number]>((acc, { polygons }) => {
     return polygons.reduce(([indices, offset], polygon) => {
       const newIndices = polygon.slice(2).map((_, i) => {
         return [offset, offset + i + 1, offset + i + 2];
@@ -158,26 +174,6 @@ window.onload = () => {
     }, acc);
   }, [[], 0]);
 
-
-  /*
-  const points = faces.map(face => {
-    return face.polygon.value.map(point => (
-      [...vec3.transformMat4(vec3.create(), point, face.transform), 1]
-    ));
-  }).flat(1);
-  const colors = faces.map((face, i) => {
-    const color = COLORS[i % COLORS.length];
-    return face.polygon.value.map((_, i) => {
-      return [...color]
-    });
-  }).flat(1);
-  const [indices] = faces.reduce<[number[], number]>(([indices, offset], face) => {
-    const newIndices = face.polygon.value.slice(2).map((_, i) => {
-      return [offset, offset + i + 1, offset + i + 2];
-    }).flat(1);
-    return [[...indices, ...newIndices], offset + face.polygon.value.length];
-  }, [[], 0]);
-  */
 
   var vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
@@ -203,15 +199,40 @@ window.onload = () => {
   gl.enable(gl.CULL_FACE);
   gl.cullFace(gl.BACK);
 
-  let rotation = 0;
+  const modelRotationMatrix = mat4.identity(mat4.create());
+  let previousPosition: ReadonlyVec3 | undefined;
+
+  window.onmousedown = (e: MouseEvent) => previousPosition = [e.clientX, -e.clientY, 0];
+  window.onmouseup = () => previousPosition = undefined;
+  window.onmousemove = (e: MouseEvent) => {
+    if (previousPosition) {
+      const currentPosition: ReadonlyVec3 = [e.clientX, -e.clientY, 0];
+      const delta = vec3.subtract(vec3.create(), currentPosition, previousPosition);
+      const axis = vec3.normalize(
+        vec3.create(),
+        vec3.rotateZ(vec3.create(), delta, [0, 0, 0], Math.PI/2),
+      );
+      const rotation = vec3.length(delta)/399;
+      if (rotation > EPSILON) {
+        const rotationMatrix = mat4.rotate(
+          mat4.create(),
+          mat4.identity(mat4.create()),
+          rotation,
+          axis,
+        );  
+        mat4.multiply(modelRotationMatrix, rotationMatrix, modelRotationMatrix);  
+        previousPosition = currentPosition;
+      }
+    }
+
+  };
+
   function animate() {
-    rotation += .01;
-    const modelViewMatrix = mat4.rotate(
+    const modelViewMatrix = mat4.multiply(
       mat4.create(),
       modelPositionMatrix,
-      rotation,
-      [0.2, 1, 0],
-    );
+      modelRotationMatrix,
+    )
 
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
