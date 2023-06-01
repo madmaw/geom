@@ -41,6 +41,18 @@ const FRAGMENT_SHADER = `#version 300 es
 `;
 
 window.onload = () => {
+  const shape2: Shape = {
+    subtractions: [],
+    value: [
+      toPlane(1, 0, 0, .2),
+      toPlane(-1, 0, 0, .2),
+      toPlane(0, 1, 0, .2),
+      toPlane(0, -1, 0, .2),
+      toPlane(0, 0, 1, 1.2),
+      toPlane(0, 0, -1, 0),
+    ],
+  };
+
   const shape1: Shape = {
     value: [
       toPlane(0, 0, 1, 1),
@@ -52,18 +64,7 @@ window.onload = () => {
       toPlane(0, 1, 0, 1),
       toPlane(0, -1, 0, 1),
     ],
-    subtractions: [],
-  };
-  const shape2: Shape = {
-    subtractions: [],
-    value: [
-      toPlane(1, 0, 0, .2),
-      toPlane(-1, 0, 0, .2),
-      toPlane(0, 1, 0, .2),
-      toPlane(0, -1, 0, .2),
-      toPlane(0, 0, 1, 1.2),
-      toPlane(0, 0, -1, 0),
-    ],
+    subtractions: [shape2],
   };
 
   const shape3: Shape = {
@@ -80,8 +81,8 @@ window.onload = () => {
   };
 
 
-  const faces = decompose([shape1, shape2]);
-  //const faces = decompose([shape1]);
+  //const faces = decompose([shape1, shape2]);
+  const faces = decompose([shape1]);
   console.log(faces);
   console.log(faces.map(({ polygons, transform }) => (
     polygons.map(polygon => {

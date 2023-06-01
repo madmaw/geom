@@ -13,6 +13,10 @@ export function toPlane(nx: number, ny: number, nz: number, d: number): Plane {
   ];
 }
 
+export function flipPlane([normal, offset]: Plane): Plane {
+  return [vec3.scale(vec3.create(), normal, -1), offset]
+}
+
 /**
  * returns translation and rotation matrices in that order, these matrices convert 
  * plane coordinates to world coordinates

@@ -1,13 +1,13 @@
 import { ReadonlyVec2, ReadonlyVec3, mat4, vec2, vec3 } from "gl-matrix";
-import { ConvexPolygon, Face, faceContainsPoint } from "./face";
-import { Shape, shapeContainsPoint } from "./shape";
+import { ConvexPolygon, Face, dedupePolygon, faceContainsPoint } from "./face";
+import { Shape, shapesContainPoint } from "./shape";
 import { Line, lineIntersection } from "./line";
-import { Plane, planeToTransforms } from "./plane";
+import { Plane, flipPlane, planeToTransforms } from "./plane";
 import { EPSILON, NORMAL_Z } from "./constants";
 
 export function decompose(shapes: readonly Shape[]): readonly Face[] {
   const allPlanes = decomposeShapesToPlanes(shapes);
-  const faces = decomposeShapesToFaces(shapes, allPlanes);
+  const faces = decomposeShapesToFaces(shapes, [], allPlanes);
   return faces;
 }
 
@@ -19,12 +19,16 @@ export function decomposeShapesToPlanes(shapes: readonly Shape[]): readonly Plan
 
 export function decomposeShapesToFaces(
   shapes: readonly Shape[],
+  parents: readonly Shape[],
   allPlanes: readonly Plane[],
 ): readonly Face[] {
   return shapes.map(shape => {
+    
     // break the shape into faces
     const faces = shape.value.map<Face[]>(plane => {
-      const [translate, rotate] = planeToTransforms(plane);
+      const [translate, rotate] = planeToTransforms(
+        parents.length % 2 ? flipPlane(plane) : plane,
+      );
       const transform = mat4.multiply(mat4.create(), translate, rotate);
       const inverseRotate = mat4.invert(mat4.create(), rotate);
       const inverse = mat4.invert(mat4.create(), transform);
@@ -44,16 +48,17 @@ export function decomposeShapesToFaces(
             return [ax + x/polygon.length, ay + y/polygon.length, 0];
           }, [0, 0, 0]);
           const worldAverage = vec3.transformMat4(vec3.create(), average, transform);
-          return shapes.every(container => {
-            return shape == container || !shapeContainsPoint(container, worldAverage);
-          });
+          return !shapesContainPoint(shapes, worldAverage, true);
         });
 
       const face: Face = {
         polygons,
         transform,
       };
-      return [face];
+      return [
+        ...decomposeShapesToFaces(shape.subtractions, [...parents, shape], allPlanes),
+        face,
+      ];
     });
     return faces;
   }).flat(2);
@@ -202,9 +207,8 @@ function decomposeConvexPolygon(polygon: ConvexPolygon, lines: readonly Line[]):
       ...polygon.slice(0, i2 > i1 ? i1 + 1 : 0),
       p1,
     ];
-    // TODO deduplicate points
     return [poly1, poly2].map(
-      poly => decomposeConvexPolygon(poly, lines)
+      poly => decomposeConvexPolygon(dedupePolygon(poly), lines)
     ).flat(1);
   }
   return [polygon];

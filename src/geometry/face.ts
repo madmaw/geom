@@ -1,6 +1,7 @@
 import { ReadonlyMat4, ReadonlyVec2, ReadonlyVec3, vec3 } from "gl-matrix";
 import { Subtraction } from "./subtraction";
 import { Line, lineIntersection } from "./line";
+import { EPSILON } from "./constants";
 
 export type Face = {
   readonly transform: ReadonlyMat4,
@@ -34,4 +35,12 @@ function convexPolygonContainsPoint(
     return count;
   }, 0);
   return count % 2;
+}
+
+export function dedupePolygon(polygon: ConvexPolygon) {
+  return polygon.filter((p1, i) => {
+    const p2 = polygon[(i + 1)%polygon.length];
+    const length = vec3.length(vec3.subtract(vec3.create(), p1, p2));
+    return length > EPSILON;
+  });
 }
