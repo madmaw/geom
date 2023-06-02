@@ -1,7 +1,7 @@
-import { Shape } from "./geometry/shape";
+import { ConvexShape, Shape } from "./geometry/shape";
 import { toPlane } from "./geometry/plane";
 import { decompose } from "./geometry/decompose";
-import { ReadonlyVec2, ReadonlyVec3, ReadonlyVec4, mat4, vec2, vec3 } from "gl-matrix";
+import { ReadonlyVec3, ReadonlyVec4, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 import { EPSILON } from "./geometry/constants";
 
@@ -41,53 +41,63 @@ const FRAGMENT_SHADER = `#version 300 es
 `;
 
 window.onload = () => {
-  const shape2: Shape = {
-    subtractions: [],
-    value: [
-      toPlane(1, 0, 0, .2),
-      toPlane(-1, 0, 0, .2),
-      toPlane(0, 1, 0, .2),
-      toPlane(0, -1, 0, .2),
-      toPlane(0, 0, 1, 1.2),
-      toPlane(0, 0, -1, 0),
-    ],
-  };
+  const shape1: ConvexShape = [
+    toPlane(0, 0, 1, 1),
+    toPlane(0, 0, -1, 1),
+    toPlane(1, 1, 0, 1),
+    toPlane(1, -1, 0, 1),
+    //toPlane(1, 0, 0, 1),
+    toPlane(-1, 0, 0, 1),
+    toPlane(0, 1, 0, 1),
+    toPlane(0, -1, 0, 1),
+  ];
 
-  const shape1: Shape = {
-    value: [
-      toPlane(0, 0, 1, 1),
-      toPlane(0, 0, -1, 1),
-      toPlane(1, 1, 0, 1),
-      toPlane(1, -1, 0, 1),
-      toPlane(1, 0, 0, 1),
-      toPlane(-1, 0, 0, 1),
-      toPlane(0, 1, 0, 1),
-      toPlane(0, -1, 0, 1),
-    ],
-    subtractions: [shape2],
-  };
+  const shape2: ConvexShape = [
+    toPlane(1, 0, 0, 0),
+    toPlane(-1, 0, 0, .4),
+    toPlane(0, 1, 0, 1.2),
+    toPlane(0, -1, 0, 1.2),
+    toPlane(0, 0, 1, .3),
+    toPlane(0, 0, -1, .3),
+  ];
 
-  const shape3: Shape = {
-    value: [
-      toPlane(1, 1, 0, .5),
-      toPlane(1, 0, 0, .5),
-      toPlane(-1, 0, 0, .5),
-      toPlane(0, 1, 0, .5),
-      toPlane(0, -1, 0, .5),
-      toPlane(0, 0, 1, 1),
-      toPlane(0, 0, -1, 1),
-    ],
-    subtractions: [],
-  };
+  const shape3: ConvexShape = [
+    toPlane(1, 0, 0, 0),
+    toPlane(-1, 0, 0, .8),
+    toPlane(0, 1, 0, 1.3),
+    toPlane(0, -1, 0, 0),
+    toPlane(0, 0, 1, .3),
+    toPlane(0, 0, -1, .3),
+  ];
+
+  const shape4: ConvexShape = [
+    toPlane(0, 0, 1, .8),
+    toPlane(0, 0, -1, .8),
+    toPlane(1, 1, 0, .8),
+    toPlane(1, -1, 0, .8),
+    //toPlane(1, 0, 0, .9),
+    toPlane(-1, 0, 0, .8),
+    toPlane(0, 1, 0, .8),
+    toPlane(0, -1, 0, .8),
+  ];
+
+  const shape5: ConvexShape = [
+    toPlane(1, 0, 0, 1.9),
+    toPlane(-1, 0, 0, 1),
+    toPlane(0, 1, 0, .2),
+    toPlane(0, -1, 0, .2),
+    toPlane(0, 0, 1, 1.2),
+    toPlane(0, 0, -1, -.8),
+  ];
 
 
-  //const faces = decompose([shape1, shape2]);
-  const faces = decompose([shape1]);
-  console.log(faces);
+  const faces = decompose([[shape1, [shape2, shape3,  shape4]], [shape5, []]]);
+  
+  console.log(faces.map(({ polygons }) => polygons.map(polygon => polygon.map(point => [...point]))));
   console.log(faces.map(({ polygons, transform }) => (
     polygons.map(polygon => {
       return polygon.map(point => (
-        vec3.transformMat4(vec3.create(), point, transform)
+        [...vec3.transformMat4(vec3.create(), point, transform)]
       ));
     })
   )));
@@ -242,6 +252,7 @@ window.onload = () => {
     
     // gl.bindVertexArray(vao);
     gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);  
+    //gl.drawElements(gl.LINE_LOOP, indices.length, gl.UNSIGNED_SHORT, 0);  
     requestAnimationFrame(animate);
   }
   animate();

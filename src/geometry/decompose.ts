@@ -1,70 +1,105 @@
-import { ReadonlyVec2, ReadonlyVec3, mat4, vec2, vec3 } from "gl-matrix";
-import { ConvexPolygon, Face, dedupePolygon, faceContainsPoint } from "./face";
-import { Shape, shapesContainPoint } from "./shape";
+import { ReadonlyMat4, ReadonlyVec2, ReadonlyVec3, mat4, vec2, vec3 } from "gl-matrix";
+import { ConvexPolygon, Face, dedupePolygon } from "./face";
+import { Shape, convexShapeContainPoint } from "./shape";
 import { Line, lineIntersection } from "./line";
 import { Plane, flipPlane, planeToTransforms } from "./plane";
 import { EPSILON, NORMAL_Z } from "./constants";
 
 export function decompose(shapes: readonly Shape[]): readonly Face[] {
   const allPlanes = decomposeShapesToPlanes(shapes);
-  const faces = decomposeShapesToFaces(shapes, [], allPlanes);
+  const faces = decomposeShapesToFaces(shapes, allPlanes);
   return faces;
 }
 
 export function decomposeShapesToPlanes(shapes: readonly Shape[]): readonly Plane[] {
-  return shapes.map(shape => {
-    return [...shape.value, ...decomposeShapesToPlanes(shape.subtractions)];
+  return shapes.map(([shape, subtractions]) => {
+    return [...shape, ...subtractions.flat(1)];
   }).flat(1);
 }
 
 export function decomposeShapesToFaces(
   shapes: readonly Shape[],
-  parents: readonly Shape[],
   allPlanes: readonly Plane[],
 ): readonly Face[] {
   return shapes.map(shape => {
-    
+    const [addition, subtractions] = shape;
     // break the shape into faces
-    const faces = shape.value.map<Face[]>(plane => {
-      const [translate, rotate] = planeToTransforms(
-        parents.length % 2 ? flipPlane(plane) : plane,
-      );
-      const transform = mat4.multiply(mat4.create(), translate, rotate);
-      const inverseRotate = mat4.invert(mat4.create(), rotate);
-      const inverse = mat4.invert(mat4.create(), transform);
-      const lines = calculateLines(shape.value, inverseRotate, inverse);
-      const polygon = calculateConvexPerimeter(lines);
-      // ignore any empty shapes
-      if (polygon.length < 3) {
-        return [];
-      }
+    return [addition, ...subtractions]
+      // index == 0 => addition
+      // index > 0 => subtraction
+      .map((convexShape, isSubtraction) => {
+        const faces = isSubtraction
+          ? convexShape.map(flipPlane)
+          : convexShape;
+        return faces.map<Face[]>(plane => {
+          const [translate, rotate] = planeToTransforms(plane);
+          const transform = mat4.multiply(mat4.create(), translate, rotate);
+          const inverseRotate = mat4.invert(mat4.create(), rotate);
+          const inverse = mat4.invert(mat4.create(), transform);
+          const lines = calculateLines(addition, inverseRotate, inverse);
+          const polygon = calculateConvexPerimeter(lines);
+  
+          // break up the polygon into smallest possible parts
+          const allLines = calculateLines(allPlanes, inverseRotate, inverse);
+          const polygons = decomposeConvexPolygon(polygon, allLines)
+            .filter(polygon => {
+              // remove any polygons that are too small
+              // ignore any empty shapes
+              if (polygon.length < 3) {
+                return;
+              }
 
-      // break up the polygon into smallest possible parts
-      const allLines = calculateLines(allPlanes, inverseRotate, inverse);
-      const polygons = decomposeConvexPolygon(polygon, allLines)
-        .filter(polygon => {
-          // remove any polygons that exist within a known shape
-          const average = polygon.reduce(([ax, ay], [x, y]) => {
-            return [ax + x/polygon.length, ay + y/polygon.length, 0];
-          }, [0, 0, 0]);
-          const worldAverage = vec3.transformMat4(vec3.create(), average, transform);
-          return !shapesContainPoint(shapes, worldAverage, true);
-        });
+              // remove any polygons that exist within a known shape
+              const average = polygon.reduce(([ax, ay], [x, y]) => {
+                return [ax + x/polygon.length, ay + y/polygon.length, 0];
+              }, [0, 0, 0]);
+              const worldAverage = vec3.transformMat4(vec3.create(), average, transform);
+              // check the center point isn't contained within a filled area
+              return !shapes.some(check => {
+                const [checkAddition, checkSubtractions] = check;
+                const subtractionsContain = checkSubtractions.some(
+                  checkSubtraction => checkSubtraction != convexShape
+                    && convexShapeContainPoint(checkSubtraction, worldAverage),
+                );
 
-      const face: Face = {
-        polygons,
-        transform,
-      };
-      return [
-        ...decomposeShapesToFaces(shape.subtractions, [...parents, shape], allPlanes),
-        face,
-      ];
-    });
-    return faces;
-  }).flat(2);
+                if (convexShape == checkAddition) {
+                  // if we are checking ourself, we only need to check our subtractions
+                  return subtractionsContain;
+                } else if (shape == check) {
+                  // it is a subtraction, we want to ensure it is inside the addition
+                  // and not in other subtractions
+                  return subtractionsContain || !convexShapeContainPoint(
+                    checkAddition,
+                    worldAverage,
+                  );
+                } else {
+                  // if we are checking against other shapes, we need to make sure
+                  // we don't sit inside them
+                  return !subtractionsContain && convexShapeContainPoint(
+                    checkAddition,
+                    worldAverage,
+                  );
+                }
+              });
+            });
+  
+          const face: Face = {
+            polygons,
+            transform,
+          };
+          return [
+            face,
+          ];
+        });  
+      });
+  }).flat(3);
 }
 
-function calculateLines(planes: readonly Plane[], inverseRotate: mat4, inverse: mat4): Line[] {
+function calculateLines(
+  planes: readonly Plane[],
+  inverseRotate: ReadonlyMat4,
+  inverse: ReadonlyMat4,
+): readonly Line[] {
   return planes.map<Line[]>(([compareDirection, compareOffset]) => {
     const rotatedCompareNormal = vec3.transformMat4(
       vec3.create(),
@@ -146,47 +181,43 @@ function calculateConvexPerimeter(lines: readonly Line[]) {
 function decomposeConvexPolygon(polygon: ConvexPolygon, lines: readonly Line[]): ConvexPolygon[] {
   // find a line that bisects the polygon
   const intersectionPointsAndIndices = lines.map(line => {
-    const intersections = polygon.map<[number, ReadonlyVec3][]>((p0, i) => {
+    const intersections = polygon.map<[ReadonlyVec3, number][]>((p0, i) => {
       const i1 = (i + 1) % polygon.length;
       const p1 = polygon[i1];
       const p2 = polygon[(i + 2) % polygon.length];
-      const prevDelta = vec3.subtract(vec3.create(), p1, p0);
-      const prevLength = vec3.length(prevDelta);
-      const prevDirection = vec3.normalize(vec3.create(), prevDelta);
-      const prevEdge: Line = [
-        prevDirection as ReadonlyVec2,
-        p0 as ReadonlyVec2,
-      ];
-      const prevIntersectionD = lineIntersection(prevEdge, line);
-      const nextDelta = vec3.subtract(vec3.create(), p2, p1);
-      const nextLength = vec3.length(nextDelta);
-      const nextDirection = vec3.normalize(vec3.create(), nextDelta);
-      const nextEdge: Line = [
-        nextDirection as ReadonlyVec2,
-        p1 as ReadonlyVec2,
-      ];
-      const nextIntersectionD = lineIntersection(nextEdge, line);
+      const p3 = polygon[(i + 3) % polygon.length];
+
+      const [prevIntersectionD] = lineDeltaAndLength(p0, p1, line);
+      const [currentIntersectionD, currentLength, currentDirection] = lineDeltaAndLength(p1, p2, line);
+      const [nextIntersectionD] = lineDeltaAndLength(p2, p3, line);
+
       if (
         // the line is parallel
-        nextIntersectionD == null
+        currentIntersectionD == null
         // the previous line is parallel and we are near the point
-        || prevIntersectionD == null && nextIntersectionD < EPSILON
+        || prevIntersectionD == null && currentIntersectionD < EPSILON
+        // the next line is parallel and we are near the point
+        || nextIntersectionD == null && currentIntersectionD > currentLength - EPSILON
+        // the intersection is off the start of the line
+        || currentIntersectionD < -EPSILON
         // the intersection is off the end of the line
-        || nextIntersectionD > nextLength - EPSILON
-        // the intersection is counted against the previous edge
-        // TODO a null previous intersection will count as false, so this null
-        // check technically isn't required
-        || prevIntersectionD != null && prevIntersectionD < prevLength - EPSILON
-      ) {
+        || currentIntersectionD > currentLength + EPSILON
+        ) {
         return [];
       }
       const intersectionPoint = vec3.add(
         vec3.create(),
         p1,
-        vec3.scale(vec3.create(), nextDirection, nextIntersectionD)
+        vec3.scale(vec3.create(), currentDirection, currentIntersectionD)
       );
-      return [[i1, intersectionPoint]];
-    }).flat(1);
+      return [[intersectionPoint, i1]];
+    })
+      .flat(1)
+      .filter(([p1], i, a) => {
+        const [p2] = a[(i+1)%a.length];
+        const d = vec3.distance(p1, p2);
+        return d > EPSILON;
+      });
     if (intersections.length == 2) {
       return intersections;
     }
@@ -194,7 +225,7 @@ function decomposeConvexPolygon(polygon: ConvexPolygon, lines: readonly Line[]):
   }).flat(1);
   if (intersectionPointsAndIndices.length) {
     // bisect
-    const [[i1, p1], [i2, p2]] = intersectionPointsAndIndices;
+    const [[p1, i1], [p2, i2]] = intersectionPointsAndIndices;
     const poly1: ConvexPolygon = [
       p1,
       ...polygon.slice(i1+1, i2 > i1 ? i2 + 1 : polygon.length),
@@ -214,3 +245,14 @@ function decomposeConvexPolygon(polygon: ConvexPolygon, lines: readonly Line[]):
   return [polygon];
 }
 
+function lineDeltaAndLength(p1: ReadonlyVec3, p2: ReadonlyVec3, line: Line): [number | undefined, number, ReadonlyVec3] {
+  const delta = vec3.subtract(vec3.create(), p2, p1);
+  const length = vec3.length(delta);
+  const direction = vec3.normalize(vec3.create(), delta);
+  const edge: Line = [
+    direction as ReadonlyVec2,
+    p1 as ReadonlyVec2,
+  ];
+  const nextIntersectionD = lineIntersection(edge, line);
+  return [nextIntersectionD, length, direction];
+}
