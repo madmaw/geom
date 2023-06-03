@@ -1,5 +1,4 @@
 import { ReadonlyMat4, ReadonlyVec2, ReadonlyVec3, vec3 } from "gl-matrix";
-import { Subtraction } from "./subtraction";
 import { Line, lineIntersection } from "./line";
 import { EPSILON } from "./constants";
 
@@ -10,15 +9,6 @@ export type Face = {
 
 // the expectation is that z is always 0
 export type ConvexPolygon = readonly ReadonlyVec3[];
-
-export function faceContainsPoint(
-  face: Subtraction<ConvexPolygon>,
-  point: ReadonlyVec3,
-): boolean {
-  return convexPolygonContainsPoint(face.value, point) && !face.subtractions.some(
-    face => faceContainsPoint(face, point)
-  );
-}
 
 function convexPolygonContainsPoint(
   polygon: ConvexPolygon,

@@ -21,7 +21,7 @@ export function decomposeShapesToFaces(
   shapes: readonly Shape[],
   allPlanes: readonly Plane[],
 ): readonly Face[] {
-  return shapes.map(shape => {
+  return shapes.map((shape, i) => {
     const [addition, subtractions] = shape;
     // break the shape into faces
     return [addition, ...subtractions]
@@ -55,11 +55,16 @@ export function decomposeShapesToFaces(
               }, [0, 0, 0]);
               const worldAverage = vec3.transformMat4(vec3.create(), average, transform);
               // check the center point isn't contained within a filled area
-              return !shapes.some(check => {
+              return !shapes.some((check, j) => {
                 const [checkAddition, checkSubtractions] = check;
                 const subtractionsContain = checkSubtractions.some(
                   checkSubtraction => checkSubtraction != convexShape
                     && convexShapeContainPoint(checkSubtraction, worldAverage),
+                );
+                const additionContains = convexShapeContainPoint(
+                  checkAddition,
+                  worldAverage,
+                  EPSILON,
                 );
 
                 if (convexShape == checkAddition) {
@@ -68,9 +73,8 @@ export function decomposeShapesToFaces(
                 } else if (shape == check) {
                   // it is a subtraction, we want to ensure it is inside the addition
                   // and not in other subtractions
-                  return subtractionsContain || !convexShapeContainPoint(
-                    checkAddition,
-                    worldAverage,
+                  return !additionContains || subtractionsContain || additionContains && !checkSubtractions.some(
+                    checkSubtraction => convexShapeContainPoint(checkSubtraction, worldAverage, EPSILON),
                   );
                 } else {
                   // if we are checking against other shapes, we need to make sure
@@ -78,6 +82,7 @@ export function decomposeShapesToFaces(
                   return !subtractionsContain && convexShapeContainPoint(
                     checkAddition,
                     worldAverage,
+                    i > j ? EPSILON : -EPSILON,
                   );
                 }
               });

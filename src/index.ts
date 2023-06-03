@@ -45,53 +45,57 @@ window.onload = () => {
     toPlane(0, 0, 1, 1),
     toPlane(0, 0, -1, 1),
     toPlane(1, 1, 0, 1),
-    toPlane(1, -1, 0, 1),
-    //toPlane(1, 0, 0, 1),
+    toPlane(-1, 1, 0, 1),
+    toPlane(1, 0, 0, 1),
     toPlane(-1, 0, 0, 1),
-    toPlane(0, 1, 0, 1),
+    //toPlane(0, 1, 0, 1),
     toPlane(0, -1, 0, 1),
   ];
 
   const shape2: ConvexShape = [
-    toPlane(1, 0, 0, 0),
-    toPlane(-1, 0, 0, .4),
-    toPlane(0, 1, 0, 1.2),
-    toPlane(0, -1, 0, 1.2),
-    toPlane(0, 0, 1, .3),
-    toPlane(0, 0, -1, .3),
+    toPlane(1, 0, 0, 1.2),
+    toPlane(-1, 0, 0, 1.2),
+    toPlane(0, 1, 0, 0),
+    toPlane(0, -1, 0, .4),
+    toPlane(0, 0, 1, .2),
+    toPlane(0, 0, -1, .2),
   ];
 
+  // door
   const shape3: ConvexShape = [
-    toPlane(1, 0, 0, 0),
-    toPlane(-1, 0, 0, .8),
-    toPlane(0, 1, 0, 1.3),
-    toPlane(0, -1, 0, 0),
-    toPlane(0, 0, 1, .3),
-    toPlane(0, 0, -1, .3),
+    toPlane(1, 0, 0, .3),
+    toPlane(-1, 0, 0, .3),
+    toPlane(0, 1, 0, 0),
+    toPlane(0, -1, 0, .8),
+    toPlane(0, 0, 1, 0.8),
+    toPlane(0, 0, -1, 1.3),
   ];
 
   const shape4: ConvexShape = [
     toPlane(0, 0, 1, .8),
     toPlane(0, 0, -1, .8),
     toPlane(1, 1, 0, .8),
-    toPlane(1, -1, 0, .8),
-    //toPlane(1, 0, 0, .9),
+    toPlane(-1, 1, 0, .8),
+    toPlane(1, 0, 0, .8),
     toPlane(-1, 0, 0, .8),
-    toPlane(0, 1, 0, .8),
+    //toPlane(0, 1, 0, .8),
     toPlane(0, -1, 0, .8),
   ];
 
   const shape5: ConvexShape = [
-    toPlane(1, 0, 0, 1.9),
-    toPlane(-1, 0, 0, 1),
-    toPlane(0, 1, 0, .2),
-    toPlane(0, -1, 0, .2),
-    toPlane(0, 0, 1, 1.2),
-    toPlane(0, 0, -1, -.8),
+    toPlane(1, 0, 0, .2),
+    toPlane(-1, 0, 0, .2),
+    toPlane(0, 1, 0, 1.8),
+    toPlane(0, -1, 0, 1),
+    toPlane(0, 0, 1, 1),
+    toPlane(0, 0, -1, -.6),
   ];
 
 
-  const faces = decompose([[shape1, [shape2, shape3,  shape4]], [shape5, []]]);
+  const faces = decompose([
+    [shape1, [shape2, shape3, shape4]],
+    [shape5, []],
+  ]).filter(() => Math.random() > .0);
   
   console.log(faces.map(({ polygons }) => polygons.map(polygon => polygon.map(point => [...point]))));
   console.log(faces.map(({ polygons, transform }) => (
