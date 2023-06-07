@@ -19,3 +19,9 @@ export function convexShapeContainPoint(
     return p[2] > threshold;
   });
 }
+
+export function convexShapeExpand(shape: ConvexShape, amount: number): ConvexShape {
+  return shape.map(([normal, position]) => {
+    return [normal, vec3.add(vec3.create(), position, vec3.scale(vec3.create(), normal, amount))]
+  });
+}

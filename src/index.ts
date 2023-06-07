@@ -1,4 +1,4 @@
-import { ConvexShape, Shape } from "./geometry/shape";
+import { ConvexShape, Shape, convexShapeExpand } from "./geometry/shape";
 import { toPlane } from "./geometry/plane";
 import { decompose } from "./geometry/decompose";
 import { ReadonlyVec3, ReadonlyVec4, mat4, vec3 } from "gl-matrix";
@@ -41,6 +41,7 @@ const FRAGMENT_SHADER = `#version 300 es
 `;
 
 window.onload = () => {
+  // frame
   const shape1: ConvexShape = [
     toPlane(0, 0, 1, 1),
     toPlane(0, 0, -1, 1),
@@ -52,25 +53,27 @@ window.onload = () => {
     toPlane(0, -1, 0, 1),
   ];
 
+  // windows
   const shape2: ConvexShape = [
     toPlane(1, 0, 0, 1.2),
     toPlane(-1, 0, 0, 1.2),
     toPlane(0, 1, 0, 0),
     toPlane(0, -1, 0, .4),
-    toPlane(0, 0, 1, .2),
-    toPlane(0, 0, -1, .2),
+    toPlane(0, 0, 1, .15),
+    toPlane(0, 0, -1, .15),
   ];
 
   // door
   const shape3: ConvexShape = [
-    toPlane(1, 0, 0, .3),
-    toPlane(-1, 0, 0, .3),
+    toPlane(1, 0, 0, .2),
+    toPlane(-1, 0, 0, .2),
     toPlane(0, 1, 0, 0),
     toPlane(0, -1, 0, .8),
     toPlane(0, 0, 1, 0.8),
     toPlane(0, 0, -1, 1.3),
   ];
 
+  // interior
   const shape4: ConvexShape = [
     toPlane(0, 0, 1, .8),
     toPlane(0, 0, -1, .8),
@@ -82,6 +85,7 @@ window.onload = () => {
     toPlane(0, -1, 0, .8),
   ];
 
+  // chimney
   const shape5: ConvexShape = [
     toPlane(1, 0, 0, .2),
     toPlane(-1, 0, 0, .2),
@@ -91,11 +95,29 @@ window.onload = () => {
     toPlane(0, 0, -1, -.6),
   ];
 
+  // chimney hole
+  const shape6: ConvexShape = [
+    toPlane(1, 0, 0, .1),
+    toPlane(-1, 0, 0, .1),
+    toPlane(0, 1, 0, 1.9),
+    toPlane(0, -1, 0, 1.1),
+    toPlane(0, 0, 1, 1.1),
+    toPlane(0, 0, -1, -.7),
+  ];
+  
 
-  const faces = decompose([
-    [shape1, [shape2, shape3, shape4]],
-    [shape5, []],
-  ]).filter(() => Math.random() > .0);
+  const expand = 0.0;
+  const shapes: Shape[] = ([
+    [shape5, [shape6]],
+    [shape1, [shape2, shape3, shape4, shape6]],
+  ] as const).map(([addition, subtractions]) => {
+    return [
+      convexShapeExpand(addition, expand),
+      subtractions.map(subtraction => convexShapeExpand(subtraction, -expand)),
+    ];
+  });
+
+  const faces = decompose(shapes).filter(() => Math.random() > .0);
   
   console.log(faces.map(({ polygons }) => polygons.map(polygon => polygon.map(point => [...point]))));
   console.log(faces.map(({ polygons, transform }) => (
@@ -161,34 +183,73 @@ window.onload = () => {
   ].map(
     uniform => gl.getUniformLocation(program, uniform)
   );
-  const points = faces.map(({ polygons, transform }) => {
-    return polygons.map(polygon => {
-      return polygon.map<[number, number, number, number]>(point => {
-        return [
-          ...vec3.transformMat4(vec3.create(), point, transform),
-          1,
-        ] as any;
-      });
-    });
-  }).flat(2);
-  const colors = faces.map(({ polygons }, j) => {
-    return polygons.map((polygon, i) => {
-      //const color = COLORS[(j+i) % COLORS.length];
-      const color = [Math.random(), Math.random(), Math.random(), 1];
-      return polygon.map<[number, number, number, number]>(() => {
-        return [...color] as any;
-      });
-    });
-  }).flat(2);
-  const [indices] = faces.reduce<[number[], number]>((acc, { polygons }) => {
-    return polygons.reduce(([indices, offset], polygon) => {
-      const newIndices = polygon.slice(2).map((_, i) => {
-        return [offset, offset + i + 1, offset + i + 2];
-      }).flat(1);
-      return [[...indices, ...newIndices], offset + polygon.length];
-    }, acc);
-  }, [[], 0]);
+  // const points = faces.map(({ polygons, transform }) => {
+  //   return polygons.map(polygon => {
+  //     return polygon.map<[number, number, number]>(point => {
+  //       return [...vec3.transformMat4(vec3.create(), point, transform)] as any;
+  //     });
+  //   });
+  // }).flat(2);
+  // const colors = faces.map(({ polygons }, j) => {
+  //   return polygons.map((polygon, i) => {
+  //     //const color = COLORS[(j+i) % COLORS.length];
+  //     const color = [Math.random(), Math.random(), Math.random()];
+  //     return polygon.map<[number, number, number]>(() => {
+  //       return [...color] as any;
+  //     });
+  //   });
+  // }).flat(2);
+  // const [indices] = faces.reduce<[number[], number]>((acc, { polygons }) => {
+  //   return polygons.reduce(([indices, offset], polygon) => {
+  //     const newIndices = polygon.slice(2).map((_, i) => {
+  //       return [offset, offset + i + 1, offset + i + 2];
+  //     }).flat(1);
+  //     return [[...indices, ...newIndices], offset + polygon.length];
+  //   }, acc);
+  // }, [[], 0]);
 
+  const [points, colors, indices] = faces.reduce<[[number, number, number][], [number, number, number][], number[]]>(([points, colors, indices], { polygons, transform }) => {
+    const inverse = mat4.invert(mat4.create(), transform);
+    const polygonPoints = polygons.flat(1);
+    const hashesToPoints = polygonPoints.reduce((acc, point) => {
+      const pointHash = hashPoint(point);
+      return acc.set(pointHash, [...point] as any);
+    }, new Map<number, [number, number, number]>());
+    const uniquePoints = [...hashesToPoints.values()];
+
+    //const color: [number, number, number] = [Math.random(), Math.random(), Math.random()];
+    const normal: [number, number, number] = [...vec3.subtract(
+      vec3.create(),
+      vec3.transformMat4(vec3.create(), [0, 0, 1], transform),
+      vec3.transformMat4(vec3.create(), [0, 0, 0], transform),
+    )] as any;
+    const cosAngle = (vec3.dot([.5, .8, 0], normal)+2)/3;
+    const color: [number, number, number] = [cosAngle, cosAngle, cosAngle];
+
+    const newColors = uniquePoints.map(() => color);
+    const newIndices = polygons.reduce<number[]>((indices, polygon) => {
+      const polygonIndices = polygon.map(point => {
+        const hash = hashPoint(point);
+        const uniquePoint = hashesToPoints.get(hash);
+        return uniquePoints.indexOf(uniquePoint);
+      });
+      const originIndex = points.length + polygonIndices[0];
+      const newIndices = polygonIndices.slice(1, -1).map((currentIndex, i) => {
+        // + 2 because we removed the first element
+        const nextIndex = polygonIndices[(i + 2)];
+        return [originIndex, points.length + currentIndex, points.length + nextIndex];
+      }).flat(1);
+      return [...indices, ...newIndices];
+    }, []);
+    const transformedPoints = uniquePoints.map<[number, number, number]>(point => {
+      return [...vec3.transformMat4(vec3.create(), point, transform)] as any;      
+    });
+    return [
+      [...points, ...transformedPoints],
+      [...colors, ...newColors],
+      [...indices, ...newIndices],
+    ];
+  }, [[], [], []]);
 
   var vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
@@ -242,7 +303,21 @@ window.onload = () => {
 
   };
 
-  function animate() {
+  const fpsDiv = document.getElementById('fps');
+  const lastFrameTimes: number[] = [];
+  gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
+  let then = 0;
+  function animate(now: number) {
+    const delta = now - then;
+    then = now;
+    lastFrameTimes.push(delta);
+    const recentFrameTimes = lastFrameTimes.slice(-30);
+    const spf = recentFrameTimes.reduce((acc, n) => {
+      return acc + n/recentFrameTimes.length;
+    }, 0);
+    if (spf > 0) {
+      fpsDiv.innerText = `${Math.round(1000/spf)}`;
+    }
     const modelViewMatrix = mat4.multiply(
       mat4.create(),
       modelPositionMatrix,
@@ -252,14 +327,13 @@ window.onload = () => {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     gl.uniformMatrix4fv(uModelViewMatrix, false, modelViewMatrix);
-    gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
     
     // gl.bindVertexArray(vao);
     gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);  
     //gl.drawElements(gl.LINE_LOOP, indices.length, gl.UNSIGNED_SHORT, 0);  
     requestAnimationFrame(animate);
   }
-  animate();
+  animate(0);
 };
 
 const COLORS: ReadonlyVec4[] = [
@@ -270,3 +344,9 @@ const COLORS: ReadonlyVec4[] = [
   [1, 0, 1, 1],
   [0, 1, 1, 1],
 ];
+
+function hashPoint(point: ReadonlyVec3) {
+  return [...point].reduce((acc, v) => {
+    return (acc << 10) | ((v * 32) & 1023);
+  }, 0);
+}
