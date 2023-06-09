@@ -1,31 +1,41 @@
 import { ConvexShape, Shape, convexShapeExpand } from "./geometry/shape";
 import { toPlane } from "./geometry/plane";
 import { decompose } from "./geometry/decompose";
-import { ReadonlyVec3, ReadonlyVec4, mat4, vec3 } from "gl-matrix";
+import { ReadonlyVec3, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 import { EPSILON } from "./geometry/constants";
+import { Face } from "./geometry/face";
 
 const A_VERTEX_POSITION = "aVertexPosition";
 const A_VERTEX_COLOR = "aVertexColor";
+const A_VERTEX_NORMAL = 'aVertexNormal';
 
 const U_MODEL_VIEW_MATRIX = "uModelViewMatrix";
 const U_PROJECTION_MATRIX = "uProjectionMatrix";
 
-const V_COLOR = "vColor";
+const V_COLOR = 'vColor';
+const V_POSITION = 'vPosition';
+const V_NORMAL = 'vNormal';
+
 const O_COLOR = "oColor";
 
 const VERTEX_SHADER = `#version 300 es
   precision lowp float;
 
   in vec4 ${A_VERTEX_POSITION};
+  in vec4 ${A_VERTEX_NORMAL};
   in vec4 ${A_VERTEX_COLOR};
   uniform mat4 ${U_MODEL_VIEW_MATRIX};
   uniform mat4 ${U_PROJECTION_MATRIX};
   out vec4 ${V_COLOR};
+  out vec3 ${V_POSITION};
+  out vec3 ${V_NORMAL};
 
   void main(void) {
     gl_Position = ${U_PROJECTION_MATRIX} * ${U_MODEL_VIEW_MATRIX} * ${A_VERTEX_POSITION};
     ${V_COLOR} = ${A_VERTEX_COLOR};
+    ${V_POSITION} = ${A_VERTEX_POSITION}.xyz;
+    ${V_NORMAL} = (${U_MODEL_VIEW_MATRIX} * ${A_VERTEX_NORMAL} - ${U_MODEL_VIEW_MATRIX} * vec4(0., 0., 0., 1.)).xyz;
   }
 `;
 
@@ -33,10 +43,16 @@ const FRAGMENT_SHADER = `#version 300 es
   precision lowp float;
 
   in vec4 ${V_COLOR};
+  in vec3 ${V_POSITION};
+  in vec3 ${V_NORMAL};
   out vec4 ${O_COLOR};
 
   void main(void) {
-    ${O_COLOR} = ${V_COLOR};
+
+    ${O_COLOR} = vec4(
+      ${V_COLOR}.rgb * max(0., dot(${V_NORMAL}, normalize(vec3(1., 2., 3.)))),
+      1.
+    );
   }
 `;
 
@@ -90,7 +106,7 @@ window.onload = () => {
     toPlane(1, 0, 0, .2),
     toPlane(-1, 0, 0, .2),
     toPlane(0, 1, 0, 1.8),
-    toPlane(0, -1, 0, 1),
+    toPlane(0, -1, 0, .8),
     toPlane(0, 0, 1, 1),
     toPlane(0, 0, -1, -.6),
   ];
@@ -101,7 +117,7 @@ window.onload = () => {
     toPlane(-1, 0, 0, .1),
     toPlane(0, 1, 0, 1.9),
     toPlane(0, -1, 0, 1.1),
-    toPlane(0, 0, 1, 1.1),
+    toPlane(0, 0, 1, .9),
     toPlane(0, 0, -1, -.7),
   ];
   
@@ -168,9 +184,11 @@ window.onload = () => {
   const [
     aPosition,
     aColor,
+    aNormal,
   ] = [
     A_VERTEX_POSITION,
     A_VERTEX_COLOR,
+    A_VERTEX_NORMAL,
   ].map(
     attribute => gl.getAttribLocation(program, attribute)
   );
@@ -183,73 +201,75 @@ window.onload = () => {
   ].map(
     uniform => gl.getUniformLocation(program, uniform)
   );
-  // const points = faces.map(({ polygons, transform }) => {
-  //   return polygons.map(polygon => {
-  //     return polygon.map<[number, number, number]>(point => {
-  //       return [...vec3.transformMat4(vec3.create(), point, transform)] as any;
-  //     });
-  //   });
-  // }).flat(2);
-  // const colors = faces.map(({ polygons }, j) => {
-  //   return polygons.map((polygon, i) => {
-  //     //const color = COLORS[(j+i) % COLORS.length];
-  //     const color = [Math.random(), Math.random(), Math.random()];
-  //     return polygon.map<[number, number, number]>(() => {
-  //       return [...color] as any;
-  //     });
-  //   });
-  // }).flat(2);
-  // const [indices] = faces.reduce<[number[], number]>((acc, { polygons }) => {
-  //   return polygons.reduce(([indices, offset], polygon) => {
-  //     const newIndices = polygon.slice(2).map((_, i) => {
-  //       return [offset, offset + i + 1, offset + i + 2];
-  //     }).flat(1);
-  //     return [[...indices, ...newIndices], offset + polygon.length];
-  //   }, acc);
-  // }, [[], 0]);
 
-  const [points, colors, indices] = faces.reduce<[[number, number, number][], [number, number, number][], number[]]>(([points, colors, indices], { polygons, transform }) => {
-    const inverse = mat4.invert(mat4.create(), transform);
-    const polygonPoints = polygons.flat(1);
-    const hashesToPoints = polygonPoints.reduce((acc, point) => {
-      const pointHash = hashPoint(point);
-      return acc.set(pointHash, [...point] as any);
-    }, new Map<number, [number, number, number]>());
-    const uniquePoints = [...hashesToPoints.values()];
+  const pointAdjacency = faces.reduce((acc, face) => {
+    return face.polygons.reduce((acc, polygon) => {
+      return polygon.reduce((acc, currentPoint, i) => {
+        const nextPoint = polygon[(i + 1)%polygon.length];
+        const currentHash = hashPoint(currentPoint);
+        const nextHash = hashPoint(nextPoint);
+        return acc.set(
+          currentHash,
+          (acc.get(currentHash) || new Map()).set(nextHash, face),
+        );
+      }, acc);
+    }, acc);
+  }, new Map<number, Map<number, Face>>());  
 
-    //const color: [number, number, number] = [Math.random(), Math.random(), Math.random()];
-    const normal: [number, number, number] = [...vec3.subtract(
-      vec3.create(),
-      vec3.transformMat4(vec3.create(), [0, 0, 1], transform),
-      vec3.transformMat4(vec3.create(), [0, 0, 0], transform),
-    )] as any;
-    const cosAngle = (vec3.dot([.5, .8, 0], normal)+2)/3;
-    const color: [number, number, number] = [cosAngle, cosAngle, cosAngle];
+  const [points, normals, colors, indices] = faces.reduce<[
+    [number, number, number][],
+    [number, number, number][],
+    [number, number, number][],
+    number[],
+  ]>(
+    ([points, normals, colors, indices], face) => {
+      const { polygons, transform } = face;
+      // if (Math.random() > .5) {
+      //   return [points, colors, indices];
+      // }
+      const polygonPoints = polygons.flat(1);
+      const hashesToPoints = polygonPoints.reduce((acc, point) => {
+        const pointHash = hashPoint(point);
+        return acc.set(pointHash, [...point] as any);
+      }, new Map<number, [number, number, number]>());
+      const uniquePoints = [...hashesToPoints.values()];
 
-    const newColors = uniquePoints.map(() => color);
-    const newIndices = polygons.reduce<number[]>((indices, polygon) => {
-      const polygonIndices = polygon.map(point => {
-        const hash = hashPoint(point);
-        const uniquePoint = hashesToPoints.get(hash);
-        return uniquePoints.indexOf(uniquePoint);
+      const normal: [number, number, number] = [...vec3.subtract(
+        vec3.create(),
+        vec3.transformMat4(vec3.create(), [0, 0, 1], transform),
+        vec3.transformMat4(vec3.create(), [0, 0, 0], transform),
+      )] as any;
+      const newNormals = uniquePoints.map(() => normal);
+
+      const color: [number, number, number] = [.2, .2, .3];
+      const newColors = uniquePoints.map(() => color);
+
+      const newIndices = polygons.reduce<number[]>((indices, polygon, i) => {
+        const polygonIndices = polygon.map(point => {
+          const hash = hashPoint(point);
+          const uniquePoint = hashesToPoints.get(hash);
+          return uniquePoints.indexOf(uniquePoint);
+        });
+        const originIndex = polygonIndices[0];
+        const newIndices = polygonIndices.slice(1, -1).map((currentIndex, i) => {
+          // + 2 because the offset is from 1
+          const nextIndex = polygonIndices[i + 2];
+          return [originIndex, currentIndex, nextIndex];
+        }).flat(1).map(v => v + points.length);
+        return [...indices, ...newIndices];
+      }, []);
+      const transformedPoints = uniquePoints.map<[number, number, number]>(point => {
+        return [...vec3.transformMat4(vec3.create(), point, transform)] as any;      
       });
-      const originIndex = points.length + polygonIndices[0];
-      const newIndices = polygonIndices.slice(1, -1).map((currentIndex, i) => {
-        // + 2 because we removed the first element
-        const nextIndex = polygonIndices[(i + 2)];
-        return [originIndex, points.length + currentIndex, points.length + nextIndex];
-      }).flat(1);
-      return [...indices, ...newIndices];
-    }, []);
-    const transformedPoints = uniquePoints.map<[number, number, number]>(point => {
-      return [...vec3.transformMat4(vec3.create(), point, transform)] as any;      
-    });
-    return [
-      [...points, ...transformedPoints],
-      [...colors, ...newColors],
-      [...indices, ...newIndices],
-    ];
-  }, [[], [], []]);
+      return [
+        [...points, ...transformedPoints],
+        [...normals, ...newNormals],
+        [...colors, ...newColors],
+        [...indices, ...newIndices],
+      ];
+    },
+    [[], [], [], []],
+  );
 
   var vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
@@ -257,6 +277,7 @@ window.onload = () => {
   ([
     [aPosition, points],
     [aColor, colors],
+    [aNormal, normals],
   ] as const).forEach(([attribute, vectors]) => {
     gl.enableVertexAttribArray(attribute);
     var buffer = gl.createBuffer();
@@ -335,15 +356,6 @@ window.onload = () => {
   }
   animate(0);
 };
-
-const COLORS: ReadonlyVec4[] = [
-  [1, 0, 0, 1],
-  [0, 1, 0, 1],
-  [0, 0, 1, 1],
-  [1, 1, 0, 1],
-  [1, 0, 1, 1],
-  [0, 1, 1, 1],
-];
 
 function hashPoint(point: ReadonlyVec3) {
   return [...point].reduce((acc, v) => {

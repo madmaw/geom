@@ -59,7 +59,7 @@ export function decomposeShapesToFaces(
                 const [checkAddition, checkSubtractions] = check;
                 const subtractionsContain = checkSubtractions.some(
                   checkSubtraction => checkSubtraction != convexShape
-                    && convexShapeContainPoint(checkSubtraction, worldAverage),
+                    && convexShapeContainPoint(checkSubtraction, worldAverage, i > j ? EPSILON : -EPSILON),
                 );
                 const additionContains = convexShapeContainPoint(
                   checkAddition,
@@ -84,6 +84,7 @@ export function decomposeShapesToFaces(
                     worldAverage,
                     i > j ? EPSILON : -EPSILON,
                   );
+
                 }
               });
             });
