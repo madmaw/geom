@@ -3,7 +3,8 @@ import { Line, lineIntersection } from "./line";
 import { EPSILON } from "./constants";
 
 export type Face = {
-  readonly transform: ReadonlyMat4,
+  readonly toWorldCoordinates: ReadonlyMat4,
+  readonly rotateToWorldCoordinates: ReadonlyMat4,
   readonly polygons: readonly ConvexPolygon[],
 };
 

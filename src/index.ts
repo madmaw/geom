@@ -1,11 +1,14 @@
 import { ConvexShape, Shape, convexShapeExpand } from "./geometry/shape";
 import { toPlane } from "./geometry/plane";
 import { decompose } from "./geometry/decompose";
-import { ReadonlyVec3, ReadonlyVec4, mat4, vec3 } from "gl-matrix";
+import { ReadonlyMat4, ReadonlyVec3, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
-import { EPSILON } from "./geometry/constants";
+import { EPSILON, NORMAL_Z } from "./geometry/constants";
 import { Face } from "./geometry/face";
-import { TEXTURE_SCALE, createTexture } from "./texture/texture";
+
+const TEXTURE_SCALE = 256;
+const BASE_LINE_WIDTH = 16;
+
 
 const A_VERTEX_POSITION = "aVertexPosition";
 const A_VERTEX_COLOR = "aVertexColor";
@@ -57,7 +60,10 @@ const FRAGMENT_SHADER = `#version 300 es
   out vec4 ${O_COLOR};
 
   void main(void) {
-    ${O_COLOR} = texture(${U_TEXTURE}, ${V_TEXTURE_COORD});
+    ${O_COLOR} = vec4(
+      mix(${V_COLOR}.rgb, vec3(1.), texture(${U_TEXTURE}, ${V_TEXTURE_COORD}).a),
+      1.
+    );
   }
 `;
 
@@ -138,26 +144,21 @@ window.onload = () => {
     ];
   });
 
-  const faces = decompose(shapes).filter(shape => shape.polygons.length);
+  let faces = decompose(shapes).filter(shape => shape.polygons.length);
   
   console.log(faces.map(({ polygons }) => polygons.map(polygon => polygon.map(point => [...point]))));
-  console.log(faces.map(({ polygons, transform }) => (
+  console.log(faces.map(({ polygons, toWorldCoordinates }) => (
     polygons.map(polygon => {
       return polygon.map(point => (
-        [...vec3.transformMat4(vec3.create(), point, transform)]
+        [...vec3.transformMat4(vec3.create(), point, toWorldCoordinates)]
       ));
     })
   )));
 
   const canvas2d = document.getElementById("canvas2d") as HTMLCanvasElement;
-  canvas2d.width = canvas2d.clientWidth;
-  canvas2d.height = canvas2d.clientHeight;
+  canvas2d.width = 4096;
+  canvas2d.height = 4096;
   const ctx = canvas2d.getContext('2d');
-  // TODO move into point creation loop
-  const textureFaceZeroCoordinates = createTexture(
-    ctx,
-    faces,
-  );
 
   
   const canvas3d = document.getElementById("canvas3d") as HTMLCanvasElement;
@@ -213,28 +214,39 @@ window.onload = () => {
   const [
     uModelViewMatrix,
     uProjectionMatrix,
-    uTexture,
   ] = [
     U_MODEL_VIEW_MATRIX,
     U_PROJECTION_MATRIX,
-    U_TEXTURE,
   ].map(
     uniform => gl.getUniformLocation(program, uniform)
   );
 
   const pointAdjacency = faces.reduce((acc, face) => {
-    return face.polygons.reduce((acc, polygon) => {
+    const { polygons, toWorldCoordinates } = face;
+    return polygons.reduce((acc, polygon) => {
       return polygon.reduce((acc, currentPoint, i) => {
+        const currentHash = hashPoint(currentPoint, toWorldCoordinates);
         const nextPoint = polygon[(i + 1)%polygon.length];
-        const currentHash = hashPoint(currentPoint);
-        const nextHash = hashPoint(nextPoint);
+        const nextHash = hashPoint(nextPoint, toWorldCoordinates);
         return acc.set(
           currentHash,
           (acc.get(currentHash) || new Map()).set(nextHash, face),
         );
       }, acc);
     }, acc);
-  }, new Map<number, Map<number, Face>>());  
+  }, new Map<number, Map<number, Face>>());
+  faces = faces.filter(face => {
+    const { polygons, toWorldCoordinates } = face;
+    const currentHash = hashPoint(polygons[0][0], toWorldCoordinates);
+    const nextHash = hashPoint(polygons[0][1], toWorldCoordinates);
+    return pointAdjacency.get(currentHash)?.get(nextHash) == face;
+  })
+
+  let textureX = 0;
+  let textureY = 0;
+  let textureMaxHeight = 0;
+  //ctx.strokeStyle = 'white';
+  ctx.lineCap = 'round';
 
   const [points, normals, colors, textureCoords, indices] = faces.reduce<[
     [number, number, number][],
@@ -243,12 +255,64 @@ window.onload = () => {
     [number, number][],
     number[],
   ]>(
-    ([points, normals, colors, textureCoords, indices], face, i) => {
-      const { polygons, transform } = face;
-      // if (Math.random() > .5) {
-      //   return [points, colors, indices];
-      // }
+    ([points, normals, colors, textureCoords, indices], face) => {
+      const { polygons, toWorldCoordinates, rotateToWorldCoordinates } = face;
+      //ctx.fillStyle = `rgb(${Math.random() * 125 | 0}, ${Math.random() * 125 | 0}, ${Math.random() * 125 | 0})`;
+
       const polygonPoints = polygons.flat(1);
+      const [[minX, minY], [maxX, maxY]] = polygonPoints.reduce<[[number, number, number], [number, number, number]]>(([min, max], point) => {
+        const newMin = min.map((v, i) => Math.min(v, point[i])) as [number, number, number];
+        const newMax = max.map((v, i) => Math.max(v, point[i])) as [number, number, number];
+        return [newMin, newMax];
+      }, [
+        [...polygonPoints[0]] as [number, number, number],
+        [...polygonPoints[0] as [number, number, number]],
+      ]);
+
+      const width = (maxX - minX) * TEXTURE_SCALE + BASE_LINE_WIDTH * 2;
+      const height = (maxY - minY) * TEXTURE_SCALE + BASE_LINE_WIDTH * 2;
+      
+      if (textureX + width > ctx.canvas.width) {
+        textureX = 0;
+        textureY += textureMaxHeight;
+        textureMaxHeight = 0;
+      }
+      const originalTextureX = textureX;
+      textureX += width;
+      textureMaxHeight = Math.max(height, textureMaxHeight);
+      //ctx.fillRect(originalTextureX, textureY, width, height);
+      polygons.forEach(polygon => {
+        polygon.forEach((p, i) => {
+          const n = polygon[(i + 1)%polygon.length];
+          const adjacentFace = pointAdjacency
+              .get(hashPoint(n, toWorldCoordinates))
+              ?.get(hashPoint(p, toWorldCoordinates));
+          if (adjacentFace != face && adjacentFace) {
+            const normal = vec3.transformMat4(
+              vec3.create(), NORMAL_Z, rotateToWorldCoordinates,
+            );
+            const adjacentNormal = vec3.transformMat4(
+              vec3.create(), NORMAL_Z, adjacentFace.rotateToWorldCoordinates,
+            );
+            const lineWidth = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
+            if (lineWidth > EPSILON) {
+              ctx.lineWidth = lineWidth * BASE_LINE_WIDTH;
+              //ctx.lineWidth = BASE_LINE_WIDTH;
+              ctx.beginPath();
+              [p, n].forEach(([px, py]) => {
+                ctx.lineTo(
+                  originalTextureX + (px - minX) * TEXTURE_SCALE + BASE_LINE_WIDTH, 
+                  textureY + (py - minY) * TEXTURE_SCALE + BASE_LINE_WIDTH,
+                );  
+              });
+              ctx.stroke();    
+            } else {
+              console.log(lineWidth);
+            }
+          }
+        });
+      });
+        
       const hashesToPoints = polygonPoints.reduce((acc, point) => {
         const pointHash = hashPoint(point);
         return acc.set(pointHash, [...point] as any);
@@ -257,14 +321,14 @@ window.onload = () => {
 
       const normal: [number, number, number] = [...vec3.subtract(
         vec3.create(),
-        vec3.transformMat4(vec3.create(), [0, 0, 1], transform),
-        vec3.transformMat4(vec3.create(), [0, 0, 0], transform),
+        vec3.transformMat4(vec3.create(), [0, 0, 1], toWorldCoordinates),
+        vec3.transformMat4(vec3.create(), [0, 0, 0], toWorldCoordinates),
       )] as any;
       const newNormals = uniquePoints.map(() => normal);
-      const [zx, zy] = textureFaceZeroCoordinates[i];
+
       const newTextureCoords = uniquePoints.map<[number, number]>(([px, py]) => {
-        const x = (px * TEXTURE_SCALE + zx)/canvas2d.width;
-        const y = (py * TEXTURE_SCALE + zy)/canvas2d.height;
+        const x = ((px - minX) * TEXTURE_SCALE + BASE_LINE_WIDTH + originalTextureX)/canvas2d.width;
+        const y = ((py - minY) * TEXTURE_SCALE + BASE_LINE_WIDTH + textureY)/canvas2d.height;
         return [x, y];
       });
 
@@ -286,7 +350,7 @@ window.onload = () => {
         return [...indices, ...newIndices];
       }, []);
       const transformedPoints = uniquePoints.map<[number, number, number]>(point => {
-        return [...vec3.transformMat4(vec3.create(), point, transform)] as any;      
+        return [...vec3.transformMat4(vec3.create(), point, toWorldCoordinates)] as any;      
       });
       return [
         [...points, ...transformedPoints],
@@ -392,8 +456,11 @@ window.onload = () => {
   animate(0);
 };
 
-function hashPoint(point: ReadonlyVec3) {
-  return [...point].reduce((acc, v) => {
-    return (acc << 10) | ((v * 32) & 1023);
+function hashPoint(point: ReadonlyVec3, transform?: ReadonlyMat4) {
+  const transformed = transform
+      ? vec3.transformMat4(vec3.create(), point, transform)
+      : point;
+  return [...transformed].reduce((acc, v) => {
+    return (acc << 10) | (Math.round((v+8) * 64) & 1023);
   }, 0);
 }

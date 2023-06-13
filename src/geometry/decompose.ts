@@ -32,10 +32,10 @@ export function decomposeShapesToFaces(
           ? convexShape.map(flipPlane)
           : convexShape;
         return faces.map<Face[]>(plane => {
-          const [translate, rotate] = planeToTransforms(plane);
-          const transform = mat4.multiply(mat4.create(), translate, rotate);
-          const inverseRotate = mat4.invert(mat4.create(), rotate);
-          const inverse = mat4.invert(mat4.create(), transform);
+          const [translate, rotateToWorldCoordinates] = planeToTransforms(plane);
+          const toWorldCoordinates = mat4.multiply(mat4.create(), translate, rotateToWorldCoordinates);
+          const inverseRotate = mat4.invert(mat4.create(), rotateToWorldCoordinates);
+          const inverse = mat4.invert(mat4.create(), toWorldCoordinates);
           const lines = calculateLines(addition, inverseRotate, inverse);
           const polygon = calculateConvexPerimeter(lines);
   
@@ -53,7 +53,7 @@ export function decomposeShapesToFaces(
               const average = polygon.reduce(([ax, ay], [x, y]) => {
                 return [ax + x/polygon.length, ay + y/polygon.length, 0];
               }, [0, 0, 0]);
-              const worldAverage = vec3.transformMat4(vec3.create(), average, transform);
+              const worldAverage = vec3.transformMat4(vec3.create(), average, toWorldCoordinates);
               // check the center point isn't contained within a filled area
               return !shapes.some((check, j) => {
                 const [checkAddition, checkSubtractions] = check;
@@ -91,7 +91,8 @@ export function decomposeShapesToFaces(
   
           const face: Face = {
             polygons,
-            transform,
+            rotateToWorldCoordinates,
+            toWorldCoordinates,
           };
           return [
             face,
