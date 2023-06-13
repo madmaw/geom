@@ -1,21 +1,25 @@
 import { ConvexShape, Shape, convexShapeExpand } from "./geometry/shape";
 import { toPlane } from "./geometry/plane";
 import { decompose } from "./geometry/decompose";
-import { ReadonlyVec3, mat4, vec3 } from "gl-matrix";
+import { ReadonlyVec3, ReadonlyVec4, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 import { EPSILON } from "./geometry/constants";
 import { Face } from "./geometry/face";
+import { TEXTURE_SCALE, createTexture } from "./texture/texture";
 
 const A_VERTEX_POSITION = "aVertexPosition";
 const A_VERTEX_COLOR = "aVertexColor";
 const A_VERTEX_NORMAL = 'aVertexNormal';
+const A_VERTEX_TEXTURE_COORD = 'aVertexTextureCoord';
 
 const U_MODEL_VIEW_MATRIX = "uModelViewMatrix";
 const U_PROJECTION_MATRIX = "uProjectionMatrix";
+const U_TEXTURE = 'uTexture';
 
 const V_COLOR = 'vColor';
 const V_POSITION = 'vPosition';
 const V_NORMAL = 'vNormal';
+const V_TEXTURE_COORD = 'vTextureCoord';
 
 const O_COLOR = "oColor";
 
@@ -25,17 +29,20 @@ const VERTEX_SHADER = `#version 300 es
   in vec4 ${A_VERTEX_POSITION};
   in vec4 ${A_VERTEX_NORMAL};
   in vec4 ${A_VERTEX_COLOR};
+  in vec2 ${A_VERTEX_TEXTURE_COORD};
   uniform mat4 ${U_MODEL_VIEW_MATRIX};
   uniform mat4 ${U_PROJECTION_MATRIX};
   out vec4 ${V_COLOR};
   out vec3 ${V_POSITION};
   out vec3 ${V_NORMAL};
+  out vec2 ${V_TEXTURE_COORD};
 
   void main(void) {
     gl_Position = ${U_PROJECTION_MATRIX} * ${U_MODEL_VIEW_MATRIX} * ${A_VERTEX_POSITION};
     ${V_COLOR} = ${A_VERTEX_COLOR};
     ${V_POSITION} = ${A_VERTEX_POSITION}.xyz;
     ${V_NORMAL} = (${U_MODEL_VIEW_MATRIX} * ${A_VERTEX_NORMAL} - ${U_MODEL_VIEW_MATRIX} * vec4(0., 0., 0., 1.)).xyz;
+    ${V_TEXTURE_COORD} = ${A_VERTEX_TEXTURE_COORD};
   }
 `;
 
@@ -45,14 +52,12 @@ const FRAGMENT_SHADER = `#version 300 es
   in vec4 ${V_COLOR};
   in vec3 ${V_POSITION};
   in vec3 ${V_NORMAL};
+  in vec2 ${V_TEXTURE_COORD};
+  uniform sampler2D ${U_TEXTURE};
   out vec4 ${O_COLOR};
 
   void main(void) {
-
-    ${O_COLOR} = vec4(
-      ${V_COLOR}.rgb * max(0., dot(${V_NORMAL}, normalize(vec3(1., 2., 3.)))),
-      1.
-    );
+    ${O_COLOR} = texture(${U_TEXTURE}, ${V_TEXTURE_COORD});
   }
 `;
 
@@ -133,7 +138,7 @@ window.onload = () => {
     ];
   });
 
-  const faces = decompose(shapes).filter(() => Math.random() > .0);
+  const faces = decompose(shapes).filter(shape => shape.polygons.length);
   
   console.log(faces.map(({ polygons }) => polygons.map(polygon => polygon.map(point => [...point]))));
   console.log(faces.map(({ polygons, transform }) => (
@@ -144,10 +149,21 @@ window.onload = () => {
     })
   )));
 
-  const canvas = document.getElementById("canvas") as HTMLCanvasElement;
-  canvas.width = canvas.clientWidth;
-  canvas.height = canvas.clientHeight;
-  const gl = canvas.getContext("webgl2");
+  const canvas2d = document.getElementById("canvas2d") as HTMLCanvasElement;
+  canvas2d.width = canvas2d.clientWidth;
+  canvas2d.height = canvas2d.clientHeight;
+  const ctx = canvas2d.getContext('2d');
+  // TODO move into point creation loop
+  const textureFaceZeroCoordinates = createTexture(
+    ctx,
+    faces,
+  );
+
+  
+  const canvas3d = document.getElementById("canvas3d") as HTMLCanvasElement;
+  canvas3d.width = canvas3d.clientWidth;
+  canvas3d.height = canvas3d.clientHeight;
+  const gl = canvas3d.getContext("webgl2");
   
   const projectionMatrix = mat4.multiply(
     mat4.create(),
@@ -155,7 +171,7 @@ window.onload = () => {
     mat4.perspective(
       mat4.create(),
       Math.PI/4,
-      canvas.clientWidth/canvas.clientHeight,
+      canvas3d.clientWidth/canvas3d.clientHeight,
       .1,
       100,
     ),
@@ -185,19 +201,23 @@ window.onload = () => {
     aPosition,
     aColor,
     aNormal,
+    aTextureCoord,
   ] = [
     A_VERTEX_POSITION,
     A_VERTEX_COLOR,
     A_VERTEX_NORMAL,
+    A_VERTEX_TEXTURE_COORD,
   ].map(
     attribute => gl.getAttribLocation(program, attribute)
   );
   const [
     uModelViewMatrix,
     uProjectionMatrix,
+    uTexture,
   ] = [
     U_MODEL_VIEW_MATRIX,
     U_PROJECTION_MATRIX,
+    U_TEXTURE,
   ].map(
     uniform => gl.getUniformLocation(program, uniform)
   );
@@ -216,13 +236,14 @@ window.onload = () => {
     }, acc);
   }, new Map<number, Map<number, Face>>());  
 
-  const [points, normals, colors, indices] = faces.reduce<[
+  const [points, normals, colors, textureCoords, indices] = faces.reduce<[
     [number, number, number][],
     [number, number, number][],
     [number, number, number][],
+    [number, number][],
     number[],
   ]>(
-    ([points, normals, colors, indices], face) => {
+    ([points, normals, colors, textureCoords, indices], face, i) => {
       const { polygons, transform } = face;
       // if (Math.random() > .5) {
       //   return [points, colors, indices];
@@ -240,6 +261,12 @@ window.onload = () => {
         vec3.transformMat4(vec3.create(), [0, 0, 0], transform),
       )] as any;
       const newNormals = uniquePoints.map(() => normal);
+      const [zx, zy] = textureFaceZeroCoordinates[i];
+      const newTextureCoords = uniquePoints.map<[number, number]>(([px, py]) => {
+        const x = (px * TEXTURE_SCALE + zx)/canvas2d.width;
+        const y = (py * TEXTURE_SCALE + zy)/canvas2d.height;
+        return [x, y];
+      });
 
       const color: [number, number, number] = [.2, .2, .3];
       const newColors = uniquePoints.map(() => color);
@@ -265,11 +292,18 @@ window.onload = () => {
         [...points, ...transformedPoints],
         [...normals, ...newNormals],
         [...colors, ...newColors],
+        [...textureCoords, ...newTextureCoords],
         [...indices, ...newIndices],
       ];
     },
-    [[], [], [], []],
+    [[], [], [], [], []],
   );
+
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas2d);
+  gl.generateMipmap(gl.TEXTURE_2D);
+
 
   var vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
@@ -278,6 +312,7 @@ window.onload = () => {
     [aPosition, points],
     [aColor, colors],
     [aNormal, normals],
+    [aTextureCoord, textureCoords],
   ] as const).forEach(([attribute, vectors]) => {
     gl.enableVertexAttribArray(attribute);
     var buffer = gl.createBuffer();
@@ -290,7 +325,7 @@ window.onload = () => {
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
 
-  gl.viewport(0, 0, canvas.clientWidth, canvas.clientHeight);
+  gl.viewport(0, 0, canvas3d.clientWidth, canvas3d.clientHeight);
   gl.enable(gl.DEPTH_TEST);
   gl.clearColor(0, 0, 0, 1);
   gl.enable(gl.CULL_FACE);
