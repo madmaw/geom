@@ -12,16 +12,15 @@ const BASE_LINE_WIDTH = 16;
 
 const A_VERTEX_POSITION = "aVertexPosition";
 const A_VERTEX_COLOR = "aVertexColor";
-const A_VERTEX_NORMAL = 'aVertexNormal';
 const A_VERTEX_TEXTURE_COORD = 'aVertexTextureCoord';
 
 const U_MODEL_VIEW_MATRIX = "uModelViewMatrix";
+const U_MODEL_ROTATION_MATRIX = 'uModelRotationMatrix';
 const U_PROJECTION_MATRIX = "uProjectionMatrix";
 const U_TEXTURE = 'uTexture';
 
 const V_COLOR = 'vColor';
 const V_POSITION = 'vPosition';
-const V_NORMAL = 'vNormal';
 const V_TEXTURE_COORD = 'vTextureCoord';
 
 const O_COLOR = "oColor";
@@ -30,21 +29,19 @@ const VERTEX_SHADER = `#version 300 es
   precision lowp float;
 
   in vec4 ${A_VERTEX_POSITION};
-  in vec4 ${A_VERTEX_NORMAL};
   in vec4 ${A_VERTEX_COLOR};
   in vec2 ${A_VERTEX_TEXTURE_COORD};
   uniform mat4 ${U_MODEL_VIEW_MATRIX};
+  uniform mat4 ${U_MODEL_ROTATION_MATRIX};
   uniform mat4 ${U_PROJECTION_MATRIX};
   out vec4 ${V_COLOR};
   out vec3 ${V_POSITION};
-  out vec3 ${V_NORMAL};
   out vec2 ${V_TEXTURE_COORD};
 
   void main(void) {
-    gl_Position = ${U_PROJECTION_MATRIX} * ${U_MODEL_VIEW_MATRIX} * ${A_VERTEX_POSITION};
+    gl_Position = ${U_PROJECTION_MATRIX} * ${U_MODEL_VIEW_MATRIX} * ${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_POSITION};
     ${V_COLOR} = ${A_VERTEX_COLOR};
     ${V_POSITION} = ${A_VERTEX_POSITION}.xyz;
-    ${V_NORMAL} = (${U_MODEL_VIEW_MATRIX} * ${A_VERTEX_NORMAL} - ${U_MODEL_VIEW_MATRIX} * vec4(0., 0., 0., 1.)).xyz;
     ${V_TEXTURE_COORD} = ${A_VERTEX_TEXTURE_COORD};
   }
 `;
@@ -54,14 +51,16 @@ const FRAGMENT_SHADER = `#version 300 es
 
   in vec4 ${V_COLOR};
   in vec3 ${V_POSITION};
-  in vec3 ${V_NORMAL};
   in vec2 ${V_TEXTURE_COORD};
   uniform sampler2D ${U_TEXTURE};
+  uniform mat4 ${U_MODEL_ROTATION_MATRIX};
   out vec4 ${O_COLOR};
 
   void main(void) {
+    vec4 p = texture(${U_TEXTURE}, ${V_TEXTURE_COORD});
+    vec3 n = (p.xyz - .5) * 2.; 
     ${O_COLOR} = vec4(
-      mix(${V_COLOR}.rgb, vec3(1.), texture(${U_TEXTURE}, ${V_TEXTURE_COORD}).a),
+      mix(${V_COLOR}.rgb * (dot(normalize(n), vec3(.2, .7, -.5)) + 1.)/2., vec3(1.), 1. - p.a),
       1.
     );
   }
@@ -133,7 +132,7 @@ window.onload = () => {
   ];
   
 
-  const expand = 0.0;
+  const expand = 0.05;
   const shapes: Shape[] = ([
     [shape5, [shape6]],
     [shape1, [shape2, shape3, shape4, shape6]],
@@ -201,21 +200,21 @@ window.onload = () => {
   const [
     aPosition,
     aColor,
-    aNormal,
     aTextureCoord,
   ] = [
     A_VERTEX_POSITION,
     A_VERTEX_COLOR,
-    A_VERTEX_NORMAL,
     A_VERTEX_TEXTURE_COORD,
   ].map(
     attribute => gl.getAttribLocation(program, attribute)
   );
   const [
     uModelViewMatrix,
+    uModelRotationMatrix,
     uProjectionMatrix,
   ] = [
     U_MODEL_VIEW_MATRIX,
+    U_MODEL_ROTATION_MATRIX,
     U_PROJECTION_MATRIX,
   ].map(
     uniform => gl.getUniformLocation(program, uniform)
@@ -248,14 +247,13 @@ window.onload = () => {
   //ctx.strokeStyle = 'white';
   ctx.lineCap = 'round';
 
-  const [points, normals, colors, textureCoords, indices] = faces.reduce<[
-    [number, number, number][],
+  const [points, colors, textureCoords, indices] = faces.reduce<[
     [number, number, number][],
     [number, number, number][],
     [number, number][],
     number[],
   ]>(
-    ([points, normals, colors, textureCoords, indices], face) => {
+    ([points, colors, textureCoords, indices], face) => {
       const { polygons, toWorldCoordinates, rotateToWorldCoordinates } = face;
       //ctx.fillStyle = `rgb(${Math.random() * 125 | 0}, ${Math.random() * 125 | 0}, ${Math.random() * 125 | 0})`;
 
@@ -280,7 +278,11 @@ window.onload = () => {
       const originalTextureX = textureX;
       textureX += width;
       textureMaxHeight = Math.max(height, textureMaxHeight);
-      //ctx.fillRect(originalTextureX, textureY, width, height);
+      const normal = vec3.transformMat4(vec3.create(), NORMAL_Z, rotateToWorldCoordinates);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = `rgba(${[...normal].map(v => (v + 1) * 127).join()})`;
+      ctx.fillRect(originalTextureX, textureY, width, height);
+      ctx.globalCompositeOperation = 'destination-out';
       polygons.forEach(polygon => {
         polygon.forEach((p, i) => {
           const n = polygon[(i + 1)%polygon.length];
@@ -297,7 +299,6 @@ window.onload = () => {
             const lineWidth = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
             if (lineWidth > EPSILON) {
               ctx.lineWidth = lineWidth * BASE_LINE_WIDTH;
-              //ctx.lineWidth = BASE_LINE_WIDTH;
               ctx.beginPath();
               [p, n].forEach(([px, py]) => {
                 ctx.lineTo(
@@ -306,8 +307,6 @@ window.onload = () => {
                 );  
               });
               ctx.stroke();    
-            } else {
-              console.log(lineWidth);
             }
           }
         });
@@ -319,20 +318,13 @@ window.onload = () => {
       }, new Map<number, [number, number, number]>());
       const uniquePoints = [...hashesToPoints.values()];
 
-      const normal: [number, number, number] = [...vec3.subtract(
-        vec3.create(),
-        vec3.transformMat4(vec3.create(), [0, 0, 1], toWorldCoordinates),
-        vec3.transformMat4(vec3.create(), [0, 0, 0], toWorldCoordinates),
-      )] as any;
-      const newNormals = uniquePoints.map(() => normal);
-
       const newTextureCoords = uniquePoints.map<[number, number]>(([px, py]) => {
         const x = ((px - minX) * TEXTURE_SCALE + BASE_LINE_WIDTH + originalTextureX)/canvas2d.width;
         const y = ((py - minY) * TEXTURE_SCALE + BASE_LINE_WIDTH + textureY)/canvas2d.height;
         return [x, y];
       });
 
-      const color: [number, number, number] = [.2, .2, .3];
+      const color: [number, number, number] = [.4, .4, .6];
       const newColors = uniquePoints.map(() => color);
 
       const newIndices = polygons.reduce<number[]>((indices, polygon, i) => {
@@ -354,13 +346,12 @@ window.onload = () => {
       });
       return [
         [...points, ...transformedPoints],
-        [...normals, ...newNormals],
         [...colors, ...newColors],
         [...textureCoords, ...newTextureCoords],
         [...indices, ...newIndices],
       ];
     },
-    [[], [], [], [], []],
+    [[], [], [], []],
   );
 
   const texture = gl.createTexture();
@@ -375,7 +366,6 @@ window.onload = () => {
   ([
     [aPosition, points],
     [aColor, colors],
-    [aNormal, normals],
     [aTextureCoord, textureCoords],
   ] as const).forEach(([attribute, vectors]) => {
     gl.enableVertexAttribArray(attribute);
@@ -438,15 +428,11 @@ window.onload = () => {
     if (spf > 0) {
       fpsDiv.innerText = `${Math.round(1000/spf)}`;
     }
-    const modelViewMatrix = mat4.multiply(
-      mat4.create(),
-      modelPositionMatrix,
-      modelRotationMatrix,
-    )
 
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    gl.uniformMatrix4fv(uModelViewMatrix, false, modelViewMatrix);
+    gl.uniformMatrix4fv(uModelViewMatrix, false, modelPositionMatrix);
+    gl.uniformMatrix4fv(uModelRotationMatrix, false, modelRotationMatrix);
     
     // gl.bindVertexArray(vao);
     gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);  
