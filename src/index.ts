@@ -1,14 +1,18 @@
-import { ConvexShape, Shape, convexShapeExpand } from "./geometry/shape";
-import { toPlane } from "./geometry/plane";
+import { ConvexShape, Shape, convexShapeContainPoint, convexShapeExpand } from "./geometry/shape";
+import { Plane, toPlane } from "./geometry/plane";
 import { decompose } from "./geometry/decompose";
 import { ReadonlyMat4, ReadonlyVec3, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 import { EPSILON, NORMAL_Z } from "./geometry/constants";
 import { Face } from "./geometry/face";
 
-const TEXTURE_SCALE = 256;
-const BASE_LINE_WIDTH = 16;
+type MaybeInvertedFace = Face & {
+  inverted: number,
+};
 
+const TEXTURE_SCALE = 128;
+const BASE_LINE_WIDTH = 1;
+const BORDER_EXPAND = 0.01;
 
 const A_VERTEX_POSITION = "aVertexPosition";
 const A_VERTEX_COLOR = "aVertexColor";
@@ -60,7 +64,7 @@ const FRAGMENT_SHADER = `#version 300 es
     vec4 p = texture(${U_TEXTURE}, ${V_TEXTURE_COORD});
     vec3 n = (p.xyz - .5) * 2.; 
     ${O_COLOR} = vec4(
-      mix(${V_COLOR}.rgb * (dot(normalize(n), vec3(.2, .7, -.5)) + 1.)/2., vec3(1.), 1. - p.a),
+      mix(vec3(1.), ${V_COLOR}.rgb * (dot(normalize(n), vec3(.2, .7, -.5)) + 1.)/2., p.a),
       1.
     );
   }
@@ -84,9 +88,9 @@ window.onload = () => {
     toPlane(1, 0, 0, 1.2),
     toPlane(-1, 0, 0, 1.2),
     toPlane(0, 1, 0, 0),
-    toPlane(0, -1, 0, .4),
-    toPlane(0, 0, 1, .15),
-    toPlane(0, 0, -1, .15),
+    toPlane(0, -1, 0, .5),
+    toPlane(0, 0, 1, .3),
+    toPlane(0, 0, -1, .3),
   ];
 
   // door
@@ -118,6 +122,7 @@ window.onload = () => {
     toPlane(0, 1, 0, 1.8),
     toPlane(0, -1, 0, .8),
     toPlane(0, 0, 1, 1),
+    //toPlane(0, 0, 1, 2),
     toPlane(0, 0, -1, -.6),
   ];
 
@@ -130,27 +135,103 @@ window.onload = () => {
     toPlane(0, 0, 1, .9),
     toPlane(0, 0, -1, -.7),
   ];
-  
 
-  const expand = 0.05;
-  const shapes: Shape[] = ([
-    [shape5, [shape6]],
-    [shape1, [shape2, shape3, shape4, shape6]],
-  ] as const).map(([addition, subtractions]) => {
+  const segmentsz = 6;
+  const segmentsy = 3;
+  const ry = .3;
+  const rz = 1;
+  const hole = ry * 3;
+
+  const disc: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
+    const az = Math.PI * 2 * i / arrz.length;
+    const cosz = Math.cos(az);
+    const sinz = Math.sin(az);
+    return new Array(segmentsy).fill(0).map<Plane>((_, j, arry) => {
+      const ay = Math.PI * (j + 1) / (arry.length + 1) - Math.PI/2;
+      const cosy = Math.cos(ay);
+      const siny = Math.sin(ay);
+      return [
+        [cosz * cosy, sinz * cosy, siny],
+        [cosz * (cosy * ry + rz), sinz * (cosy * ry + rz), siny * ry],
+      ];
+    });
+  }).flat(1).concat([
+    toPlane(0, 0, -1, ry),
+    toPlane(0, 0, 1, ry),
+  ]);
+
+  const column: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
+    const az = Math.PI * 2 * i / arrz.length;
+    const cosz = Math.cos(az);
+    const sinz = Math.sin(az);
+    return toPlane(cosz, sinz, 0, .4);
+  }).concat([
+    toPlane(0, 0, -1, 1),
+    toPlane(0, 0, 1, 1),
+  ]);
+
+  const columns: ConvexShape[] = new Array(segmentsy).fill(0).map((_, i, arry) => {
+    const ay = Math.PI * (i + 1) / (arry.length + 1) - Math.PI/2;
+    const cosy = Math.cos(ay);
+    const siny = Math.sin(ay);
+    return new Array(segmentsz).fill(0).map<Plane>((_, j, arrz) => {
+      const az = Math.PI * 2 * j / arrz.length;
+      const cosz = Math.cos(az);
+      const sinz = Math.sin(az);
+      return [
+        [-cosz * cosy, -sinz * cosy, -siny],
+        [cosz * (cosy * ry - hole), sinz * (cosy * ry - hole), siny * ry],
+      ];
+    }).concat([
+      toPlane(0, 0, -1, 2),
+      toPlane(0, 0, 1, 2),  
+    ]);
+});
+  
+  const shapes: readonly Shape[] = ([
+    // [shape5, [shape6]],
+    // [shape1, [shape2, shape3, shape4, shape6]],
+    [disc, columns],
+    // [disc, [column]],
+    //[column, []],
+    //[columns[0], []],
+    //...columns.map<Shape>(column => [column, []]),
+  ] as const);
+  const negativeShapes = shapes.map(([addition, subtractions]) => {
     return [
-      convexShapeExpand(addition, expand),
-      subtractions.map(subtraction => convexShapeExpand(subtraction, -expand)),
-    ];
+      convexShapeExpand(addition, BORDER_EXPAND),
+      subtractions.map(subtraction => convexShapeExpand(subtraction, -BORDER_EXPAND)),
+    ] as const;
   });
 
-  let faces = decompose(shapes).filter(shape => shape.polygons.length);
+  let faces: MaybeInvertedFace[] = [shapes, negativeShapes].map((shapes, i) => {
+    const faces = decompose(shapes);
+    // reverse the face
+    return faces.map<MaybeInvertedFace>(({
+      polygons,
+      rotateToWorldCoordinates,
+      toWorldCoordinates,
+    }) => {
+      return {
+        polygons: polygons.map(polygon => (i ? [...polygon].reverse() : polygon).filter((p, i, a) => {
+          const n = a[(i + 1)%a.length];
+          return hashPoint(n) != hashPoint(p);
+        })).filter(polygon => polygon.length > 2),
+        rotateToWorldCoordinates,
+        toWorldCoordinates,
+        inverted: i,
+      };
+    }).filter(shape => shape.polygons.length);
+  }).flat(1);
   
   console.log(faces.map(({ polygons }) => polygons.map(polygon => polygon.map(point => [...point]))));
   console.log(faces.map(({ polygons, toWorldCoordinates }) => (
     polygons.map(polygon => {
-      return polygon.map(point => (
-        [...vec3.transformMat4(vec3.create(), point, toWorldCoordinates)]
-      ));
+      return polygon.map(point => {
+        const worldPoint = vec3.transformMat4(vec3.create(), point, toWorldCoordinates);
+        const hash = hashPoint(worldPoint); 
+        return [...worldPoint, hash];
+      });
     })
   )));
 
@@ -158,7 +239,6 @@ window.onload = () => {
   canvas2d.width = 4096;
   canvas2d.height = 4096;
   const ctx = canvas2d.getContext('2d');
-
   
   const canvas3d = document.getElementById("canvas3d") as HTMLCanvasElement;
   canvas3d.width = canvas3d.clientWidth;
@@ -254,7 +334,7 @@ window.onload = () => {
     number[],
   ]>(
     ([points, colors, textureCoords, indices], face) => {
-      const { polygons, toWorldCoordinates, rotateToWorldCoordinates } = face;
+      const { polygons, toWorldCoordinates, rotateToWorldCoordinates, inverted = 0 } = face;
       //ctx.fillStyle = `rgb(${Math.random() * 125 | 0}, ${Math.random() * 125 | 0}, ${Math.random() * 125 | 0})`;
 
       const polygonPoints = polygons.flat(1);
@@ -280,7 +360,7 @@ window.onload = () => {
       textureMaxHeight = Math.max(height, textureMaxHeight);
       const normal = vec3.transformMat4(vec3.create(), NORMAL_Z, rotateToWorldCoordinates);
       ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = `rgba(${[...normal].map(v => (v + 1) * 127).join()})`;
+      ctx.fillStyle = `rgba(${[...normal].map(v => (v + 1) * 127).join()},${(1 - inverted) * 255})`;
       ctx.fillRect(originalTextureX, textureY, width, height);
       ctx.globalCompositeOperation = 'destination-out';
       polygons.forEach(polygon => {
@@ -288,26 +368,24 @@ window.onload = () => {
           const n = polygon[(i + 1)%polygon.length];
           const adjacentFace = pointAdjacency
               .get(hashPoint(n, toWorldCoordinates))
-              ?.get(hashPoint(p, toWorldCoordinates));
-          if (adjacentFace != face && adjacentFace) {
-            const normal = vec3.transformMat4(
-              vec3.create(), NORMAL_Z, rotateToWorldCoordinates,
-            );
-            const adjacentNormal = vec3.transformMat4(
-              vec3.create(), NORMAL_Z, adjacentFace.rotateToWorldCoordinates,
-            );
-            const lineWidth = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
-            if (lineWidth > EPSILON) {
-              ctx.lineWidth = lineWidth * BASE_LINE_WIDTH;
-              ctx.beginPath();
-              [p, n].forEach(([px, py]) => {
-                ctx.lineTo(
-                  originalTextureX + (px - minX) * TEXTURE_SCALE + BASE_LINE_WIDTH, 
-                  textureY + (py - minY) * TEXTURE_SCALE + BASE_LINE_WIDTH,
-                );  
-              });
-              ctx.stroke();    
-            }
+              .get(hashPoint(p, toWorldCoordinates));
+          const normal = vec3.transformMat4(
+            vec3.create(), NORMAL_Z, rotateToWorldCoordinates,
+          );
+          const adjacentNormal = vec3.transformMat4(
+            vec3.create(), NORMAL_Z, adjacentFace.rotateToWorldCoordinates,
+          );
+          const lineWidth = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
+          if (lineWidth > EPSILON || true) {
+            ctx.lineWidth = BASE_LINE_WIDTH;
+            ctx.beginPath();
+            [p, n].forEach(([px, py]) => {
+              ctx.lineTo(
+                originalTextureX + (px - minX) * TEXTURE_SCALE + BASE_LINE_WIDTH, 
+                textureY + (py - minY) * TEXTURE_SCALE + BASE_LINE_WIDTH,
+              );  
+            });
+            ctx.stroke();    
           }
         });
       });
@@ -324,8 +402,13 @@ window.onload = () => {
         return [x, y];
       });
 
-      const color: [number, number, number] = [.4, .4, .6];
-      const newColors = uniquePoints.map(() => color);
+      const outsideColor: [number, number, number] = [.4, .4, .6];
+      const insideColor: [number, number, number] = [.1, .1, .1];
+      const newColors = uniquePoints.map(point => {
+        const worldPoint = vec3.transformMat4(vec3.create(), point, toWorldCoordinates);
+        const inside = shapes.some(([addition]) => convexShapeContainPoint(addition, worldPoint));
+        return inside ? insideColor : outsideColor;
+      });
 
       const newIndices = polygons.reduce<number[]>((indices, polygon, i) => {
         const polygonIndices = polygon.map(point => {
@@ -357,6 +440,8 @@ window.onload = () => {
   const texture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas2d);
+  //gl.texParameterf(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.generateMipmap(gl.TEXTURE_2D);
 
 
@@ -383,7 +468,7 @@ window.onload = () => {
   gl.enable(gl.DEPTH_TEST);
   gl.clearColor(0, 0, 0, 1);
   gl.enable(gl.CULL_FACE);
-  gl.cullFace(gl.BACK);
+  //gl.cullFace(gl.BACK);
 
   const modelRotationMatrix = mat4.identity(mat4.create());
   let previousPosition: ReadonlyVec3 | undefined;
@@ -447,6 +532,6 @@ function hashPoint(point: ReadonlyVec3, transform?: ReadonlyMat4) {
       ? vec3.transformMat4(vec3.create(), point, transform)
       : point;
   return [...transformed].reduce((acc, v) => {
-    return (acc << 10) | (Math.round((v+8) * 64) & 1023);
+    return (acc << 10) | (Math.round((v+4) * 128) & 1023);
   }, 0);
 }

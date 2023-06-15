@@ -88,15 +88,20 @@ export function decomposeShapesToFaces(
                 }
               });
             });
-  
-          const face: Face = {
-            polygons,
-            rotateToWorldCoordinates,
-            toWorldCoordinates,
-          };
-          return [
-            face,
-          ];
+          if (polygons.length) {
+            const worldPoint = vec3.transformMat4(vec3.create(), polygons[0][0], toWorldCoordinates);
+            if (convexShapeContainPoint(convexShape, worldPoint, EPSILON)) {
+              const face: Face = {
+                polygons,
+                rotateToWorldCoordinates,
+                toWorldCoordinates,
+              };
+              return [
+                face,
+              ];  
+            }  
+          }
+          return [];
         });  
       });
   }).flat(3);
