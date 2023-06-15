@@ -100,18 +100,14 @@ export function decomposeShapesToFaces(
               });
             });
           if (polygons.length) {
-            const worldPoint = vec3.transformMat4(vec3.create(), polygons[0][0], toWorldCoordinates);
-            // why do we do this check?
-            if (convexShapeContainPoint(convexShape, worldPoint, EPSILON)) {
-              const face: Face = {
-                polygons,
-                rotateToWorldCoordinates,
-                toWorldCoordinates,
-              };
-              return [
-                face,
-              ];  
-            }  
+            const face: Face = {
+              polygons,
+              rotateToWorldCoordinates,
+              toWorldCoordinates,
+            };
+            return [
+              face,
+            ];  
           }
           return [];
         });  

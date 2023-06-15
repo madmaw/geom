@@ -66,7 +66,7 @@ const FRAGMENT_SHADER = `#version 300 es
     vec3 n = (p.xyz - .5) * 2.; 
     ${O_COLOR} = vec4(
       mix(vec3(1.), ${V_COLOR}.rgb * (dot(normalize(n), vec3(.2, .7, -.5)) + 1.)/2., p.a),
-      1.
+      ${V_COLOR}.a
     );
   }
 `;
@@ -148,11 +148,11 @@ window.onload = () => {
     toPlane(0, 0, -1, -.2),
   ];
   
-  const segmentsz = 6;
+  const segmentsz = 10;
   const segmentsy = 3;
-  const ry = .3;
+  const ry = .2;
   const rz = 1;
-  const hole = ry * 3;
+  const hole = rz - .1;
 
   const disc: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
     const az = Math.PI * 2 * i / arrz.length;
@@ -201,10 +201,10 @@ window.onload = () => {
   });
   
   const shapes: readonly Shape[] = ([
-    [shape5, [shape6]],
+    //[shape5, [shape6]],
     // [shape7, [shape6]],
-    [shape1, [shape2, shape3, shape4, shape6]],
-    //[disc, columns],
+    //[shape1, [shape2, shape3, shape4, shape6]],
+    [disc, columns],
     // [disc, [column]],
     //[column, []],
     //[columns[0], []],
@@ -256,7 +256,11 @@ window.onload = () => {
   const canvas3d = document.getElementById("canvas3d") as HTMLCanvasElement;
   canvas3d.width = canvas3d.clientWidth;
   canvas3d.height = canvas3d.clientHeight;
-  const gl = canvas3d.getContext("webgl2");
+  const gl = canvas3d.getContext("webgl2", {
+    // prevents alpha from being rendered, but we can still use it for
+    // measuring brightness (hopefully)
+    alpha: false,
+  });
   
   const projectionMatrix = mat4.multiply(
     mat4.create(),
@@ -368,7 +372,7 @@ window.onload = () => {
 
   const [points, colors, textureCoords, indices] = faces.reduce<[
     [number, number, number][],
-    [number, number, number][],
+    [number, number, number, number][],
     [number, number][],
     number[],
   ]>(
@@ -442,8 +446,8 @@ window.onload = () => {
         return [x, y];
       });
 
-      const outsideColor: [number, number, number] = [.4, .4, .6];
-      const insideColor: [number, number, number] = [.1, .1, .1];
+      const outsideColor: [number, number, number, number] = [.4, .4, .6, .3];
+      const insideColor: [number, number, number, number] = [.1, .1, .1, .6];
       const newColors = uniquePoints.map(point => {
         const worldPoint = vec3.transformMat4(vec3.create(), point, toWorldCoordinates);
         const inside = shapes.some(([addition]) => convexShapeContainPoint(addition, worldPoint));
