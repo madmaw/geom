@@ -55,41 +55,53 @@ export function decomposeShapesToFaces(
               }, [0, 0, 0]);
               const worldAverage = vec3.transformMat4(vec3.create(), average, toWorldCoordinates);
               // check the center point isn't contained within a filled area
-              return !shapes.some((check, j) => {
+              return shapes.every((check, j) => {
                 const [checkAddition, checkSubtractions] = check;
                 const subtractionsContain = checkSubtractions.some(
-                  checkSubtraction => checkSubtraction != convexShape
-                    && convexShapeContainPoint(checkSubtraction, worldAverage, i > j ? EPSILON : -EPSILON),
-                );
-                const additionContains = convexShapeContainPoint(
-                  checkAddition,
-                  worldAverage,
-                  EPSILON,
+                  checkSubtraction => convexShapeContainPoint(
+                      checkSubtraction,
+                      worldAverage,
+                      i > j ? EPSILON : -EPSILON,
+                    ),
                 );
 
                 if (convexShape == checkAddition) {
                   // if we are checking ourself, we only need to check our subtractions
-                  return subtractionsContain;
+                  return !subtractionsContain;
                 } else if (shape == check) {
-                  // it is a subtraction, we want to ensure it is inside the addition
-                  // and not in other subtractions
-                  return !additionContains || subtractionsContain || additionContains && !checkSubtractions.some(
-                    checkSubtraction => convexShapeContainPoint(checkSubtraction, worldAverage, EPSILON),
-                  );
-                } else {
-                  // if we are checking against other shapes, we need to make sure
-                  // we don't sit inside them
-                  return !subtractionsContain && convexShapeContainPoint(
+                  const additionContains = convexShapeContainPoint(
                     checkAddition,
                     worldAverage,
-                    i > j ? EPSILON : -EPSILON,
+                    EPSILON,
                   );
-
+  
+                  // it's inside the bounding shape
+                  return additionContains
+                    // the inset subtractions don't contain it
+                    && !subtractionsContain
+                    // the outset subtractions do contain it
+                    && checkSubtractions.some(
+                      checkSubtraction => convexShapeContainPoint(
+                        checkSubtraction,
+                        worldAverage,
+                        EPSILON,
+                      ),
+                    );
+                } else {
+                  // if the subtractions contain this polygon we can show it
+                  return subtractionsContain
+                  // if the shape doesn't contain this polygon we can show it
+                    || !convexShapeContainPoint(
+                      checkAddition,
+                      worldAverage,
+                      i > j ? EPSILON : -EPSILON,
+                    );
                 }
               });
             });
           if (polygons.length) {
             const worldPoint = vec3.transformMat4(vec3.create(), polygons[0][0], toWorldCoordinates);
+            // why do we do this check?
             if (convexShapeContainPoint(convexShape, worldPoint, EPSILON)) {
               const face: Face = {
                 polygons,

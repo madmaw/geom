@@ -10,9 +10,10 @@ type MaybeInvertedFace = Face & {
   inverted: number,
 };
 
-const TEXTURE_SCALE = 128;
+const TEXTURE_SCALE = 64;
+const TEXTURE_BUFFER = 12;
 const BASE_LINE_WIDTH = 1;
-const BORDER_EXPAND = 0.01;
+const BORDER_EXPAND = 0.02;
 
 const A_VERTEX_POSITION = "aVertexPosition";
 const A_VERTEX_COLOR = "aVertexColor";
@@ -117,25 +118,36 @@ window.onload = () => {
 
   // chimney
   const shape5: ConvexShape = [
-    toPlane(1, 0, 0, .2),
-    toPlane(-1, 0, 0, .2),
+    toPlane(1, 0, 0, .4),
+    toPlane(-1, 0, 0, .4),
     toPlane(0, 1, 0, 1.8),
     toPlane(0, -1, 0, .8),
     toPlane(0, 0, 1, 1),
     //toPlane(0, 0, 1, 2),
-    toPlane(0, 0, -1, -.6),
+    toPlane(0, 0, -1, -.2),
   ];
-
+  
   // chimney hole
   const shape6: ConvexShape = [
-    toPlane(1, 0, 0, .1),
-    toPlane(-1, 0, 0, .1),
+    toPlane(1, 0, 0, .2),
+    toPlane(-1, 0, 0, .2),
     toPlane(0, 1, 0, 1.9),
     toPlane(0, -1, 0, 1.1),
-    toPlane(0, 0, 1, .9),
-    toPlane(0, 0, -1, -.7),
+    toPlane(0, 0, 1, .8),
+    toPlane(0, 0, -1, -.4),
   ];
 
+  // chimney2
+  const shape7: ConvexShape = [
+    toPlane(1, 0, 0, .4),
+    toPlane(-1, 0, 0, .4),
+    toPlane(0, 1, 0, 1.5),
+    toPlane(0, -1, 0, .8),
+    toPlane(0, 0, 1, 1),
+    //toPlane(0, 0, 1, 2),
+    toPlane(0, 0, -1, -.2),
+  ];
+  
   const segmentsz = 6;
   const segmentsy = 3;
   const ry = .3;
@@ -186,12 +198,13 @@ window.onload = () => {
       toPlane(0, 0, -1, 2),
       toPlane(0, 0, 1, 2),  
     ]);
-});
+  });
   
   const shapes: readonly Shape[] = ([
-    // [shape5, [shape6]],
-    // [shape1, [shape2, shape3, shape4, shape6]],
-    [disc, columns],
+    [shape5, [shape6]],
+    // [shape7, [shape6]],
+    [shape1, [shape2, shape3, shape4, shape6]],
+    //[disc, columns],
     // [disc, [column]],
     //[column, []],
     //[columns[0], []],
@@ -221,9 +234,9 @@ window.onload = () => {
         toWorldCoordinates,
         inverted: i,
       };
-    }).filter(shape => shape.polygons.length);
+    }).filter(shape => shape.polygons.length && Math.random() > .0);
   }).flat(1);
-  
+
   console.log(faces.map(({ polygons }) => polygons.map(polygon => polygon.map(point => [...point]))));
   console.log(faces.map(({ polygons, toWorldCoordinates }) => (
     polygons.map(polygon => {
@@ -314,18 +327,44 @@ window.onload = () => {
       }, acc);
     }, acc);
   }, new Map<number, Map<number, Face>>());
+  // remove duplicate or disconnected faces
   faces = faces.filter(face => {
+
     const { polygons, toWorldCoordinates } = face;
+
     const currentHash = hashPoint(polygons[0][0], toWorldCoordinates);
     const nextHash = hashPoint(polygons[0][1], toWorldCoordinates);
-    return pointAdjacency.get(currentHash)?.get(nextHash) == face;
-  })
+    // only keep faces that map to themselves (overlapping faces will map to another face)
+    return pointAdjacency.get(currentHash).get(nextHash) == face;
+      // and faces that connect to something
+      // && !polygons.some(polygon => polygon.some((p, i) => {
+      //   const n = polygon[(i + 1)%polygon.length];
+      //   const ph = hashPoint(p, toWorldCoordinates);
+      //   const nh = hashPoint(n, toWorldCoordinates);
+      //   // note we have reversed the order here to get the joining face
+      //   const adjacentFace = pointAdjacency.get(nh)?.get(ph);
+      //   return !adjacentFace;
+      // }));
+  });
+
+  console.log(faces.map(({ polygons, toWorldCoordinates }) => (
+    polygons.map(polygon => {
+      return polygon.map(point => {
+        const worldPoint = vec3.transformMat4(vec3.create(), point, toWorldCoordinates);
+        const hash = hashPoint(worldPoint); 
+        return [...worldPoint, hash];
+      });
+    })
+  )));
+
 
   let textureX = 0;
   let textureY = 0;
   let textureMaxHeight = 0;
   //ctx.strokeStyle = 'white';
   ctx.lineCap = 'round';
+
+  const pointCache = new Map<number, [number, number, number]>();
 
   const [points, colors, textureCoords, indices] = faces.reduce<[
     [number, number, number][],
@@ -347,8 +386,8 @@ window.onload = () => {
         [...polygonPoints[0] as [number, number, number]],
       ]);
 
-      const width = (maxX - minX) * TEXTURE_SCALE + BASE_LINE_WIDTH * 2;
-      const height = (maxY - minY) * TEXTURE_SCALE + BASE_LINE_WIDTH * 2;
+      const width = (maxX - minX) * TEXTURE_SCALE + TEXTURE_BUFFER * 2;
+      const height = (maxY - minY) * TEXTURE_SCALE + TEXTURE_BUFFER * 2;
       
       if (textureX + width > ctx.canvas.width) {
         textureX = 0;
@@ -369,6 +408,7 @@ window.onload = () => {
           const adjacentFace = pointAdjacency
               .get(hashPoint(n, toWorldCoordinates))
               .get(hashPoint(p, toWorldCoordinates));
+          // TODO filter out unconnected faces
           const normal = vec3.transformMat4(
             vec3.create(), NORMAL_Z, rotateToWorldCoordinates,
           );
@@ -377,12 +417,12 @@ window.onload = () => {
           );
           const lineWidth = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
           if (lineWidth > EPSILON || true) {
-            ctx.lineWidth = BASE_LINE_WIDTH;
+            ctx.lineWidth = lineWidth > EPSILON ? BASE_LINE_WIDTH : BASE_LINE_WIDTH / 4;
             ctx.beginPath();
             [p, n].forEach(([px, py]) => {
               ctx.lineTo(
-                originalTextureX + (px - minX) * TEXTURE_SCALE + BASE_LINE_WIDTH, 
-                textureY + (py - minY) * TEXTURE_SCALE + BASE_LINE_WIDTH,
+                originalTextureX + (px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER, 
+                textureY + (py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER,
               );  
             });
             ctx.stroke();    
@@ -392,13 +432,13 @@ window.onload = () => {
         
       const hashesToPoints = polygonPoints.reduce((acc, point) => {
         const pointHash = hashPoint(point);
-        return acc.set(pointHash, [...point] as any);
+        return acc.set(pointHash, [...point] as [number, number, number]);
       }, new Map<number, [number, number, number]>());
       const uniquePoints = [...hashesToPoints.values()];
 
       const newTextureCoords = uniquePoints.map<[number, number]>(([px, py]) => {
-        const x = ((px - minX) * TEXTURE_SCALE + BASE_LINE_WIDTH + originalTextureX)/canvas2d.width;
-        const y = ((py - minY) * TEXTURE_SCALE + BASE_LINE_WIDTH + textureY)/canvas2d.height;
+        const x = ((px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER + originalTextureX)/canvas2d.width;
+        const y = ((py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER + textureY)/canvas2d.height;
         return [x, y];
       });
 
@@ -425,7 +465,13 @@ window.onload = () => {
         return [...indices, ...newIndices];
       }, []);
       const transformedPoints = uniquePoints.map<[number, number, number]>(point => {
-        return [...vec3.transformMat4(vec3.create(), point, toWorldCoordinates)] as any;      
+        const worldPoint = [...vec3.transformMat4(
+          vec3.create(), point, toWorldCoordinates,
+        )] as [number, number, number];
+        const worldPointHash = hashPoint(worldPoint);
+        const cachedWorldPoint = pointCache.get(worldPointHash) || worldPoint;
+        pointCache.set(worldPointHash, cachedWorldPoint);
+        return cachedWorldPoint;
       });
       return [
         [...points, ...transformedPoints],
@@ -466,7 +512,7 @@ window.onload = () => {
 
   gl.viewport(0, 0, canvas3d.clientWidth, canvas3d.clientHeight);
   gl.enable(gl.DEPTH_TEST);
-  gl.clearColor(0, 0, 0, 1);
+  gl.clearColor(.2, .2, .2, 1);
   gl.enable(gl.CULL_FACE);
   //gl.cullFace(gl.BACK);
 
@@ -495,7 +541,10 @@ window.onload = () => {
         previousPosition = currentPosition;
       }
     }
-
+  };
+  window.onwheel = (e: WheelEvent) => {
+    const positionMatrix = mat4.translate(mat4.create(), mat4.identity(mat4.create()), [0, 0, -e.deltaY/100]);
+    mat4.multiply(modelPositionMatrix, positionMatrix, modelPositionMatrix);
   };
 
   const fpsDiv = document.getElementById('fps');
