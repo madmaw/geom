@@ -64,38 +64,32 @@ export function decomposeShapesToFaces(
                       i > j ? EPSILON : -EPSILON,
                     ),
                 );
+                const additionContains = convexShapeContainPoint(
+                  checkAddition,
+                  worldAverage,
+                  i < j ? -EPSILON : EPSILON,
+                );
 
-                if (convexShape == checkAddition) {
-                  // if we are checking ourself, we only need to check our subtractions
-                  return !subtractionsContain;
-                } else if (shape == check) {
-                  const additionContains = convexShapeContainPoint(
-                    checkAddition,
-                    worldAverage,
-                    EPSILON,
-                  );
-  
+                // we are comparing with the current shape
+                if (shape == check) {
                   // it's inside the bounding shape
                   return additionContains
                     // the inset subtractions don't contain it
                     && !subtractionsContain
-                    // the outset subtractions do contain it
-                    && checkSubtractions.some(
+                    // the outset subtractions do contain it or we are adding
+                    && (convexShape == checkAddition || checkSubtractions.some(
                       checkSubtraction => convexShapeContainPoint(
                         checkSubtraction,
                         worldAverage,
                         EPSILON,
                       ),
-                    );
+                    ));
                 } else {
+                  // we are comparing with other shapes in the object
                   // if the subtractions contain this polygon we can show it
                   return subtractionsContain
                   // if the shape doesn't contain this polygon we can show it
-                    || !convexShapeContainPoint(
-                      checkAddition,
-                      worldAverage,
-                      i > j ? EPSILON : -EPSILON,
-                    );
+                    || !additionContains;
                 }
               });
             });

@@ -148,8 +148,8 @@ window.onload = () => {
     toPlane(0, 0, -1, -.2),
   ];
   
-  const segmentsz = 10;
-  const segmentsy = 3;
+  const segmentsz = 8;
+  const segmentsy = 2;
   const ry = .2;
   const rz = 1;
   const hole = rz - .1;
@@ -187,7 +187,7 @@ window.onload = () => {
     const cosy = Math.cos(ay);
     const siny = Math.sin(ay);
     return new Array(segmentsz).fill(0).map<Plane>((_, j, arrz) => {
-      const az = Math.PI * 2 * j / arrz.length;
+      const az = Math.PI * 2 * (j + (arrz.length%2)/2) / arrz.length;
       const cosz = Math.cos(az);
       const sinz = Math.sin(az);
       return [
@@ -195,10 +195,10 @@ window.onload = () => {
         [cosz * (cosy * ry - hole), sinz * (cosy * ry - hole), siny * ry],
       ];
     }).concat([
-      toPlane(0, 0, -1, 2),
-      toPlane(0, 0, 1, 2),  
+      toPlane(0, 0, -1, 1),
+      toPlane(0, 0, 1, 1),
     ]);
-  });
+  }).filter(v => v != null);
   
   const shapes: readonly Shape[] = ([
     //[shape5, [shape6]],
@@ -228,7 +228,7 @@ window.onload = () => {
       return {
         polygons: polygons.map(polygon => (i ? [...polygon].reverse() : polygon).filter((p, i, a) => {
           const n = a[(i + 1)%a.length];
-          return hashPoint(n) != hashPoint(p);
+          return hashPoint(n, toWorldCoordinates) != hashPoint(p, toWorldCoordinates);
         })).filter(polygon => polygon.length > 2),
         rotateToWorldCoordinates,
         toWorldCoordinates,
@@ -317,11 +317,16 @@ window.onload = () => {
     uniform => gl.getUniformLocation(program, uniform)
   );
 
+  const pointCache = new Map<number, [number, number, number]>();
   const pointAdjacency = faces.reduce((acc, face) => {
     const { polygons, toWorldCoordinates } = face;
     return polygons.reduce((acc, polygon) => {
       return polygon.reduce((acc, currentPoint, i) => {
-        const currentHash = hashPoint(currentPoint, toWorldCoordinates);
+        const currentWorldPoint = [...vec3.transformMat4(
+          vec3.create(), currentPoint, toWorldCoordinates,
+        )] as [number, number, number];
+        const currentHash = hashPoint(currentWorldPoint);
+        pointCache.set(currentHash, currentWorldPoint);
         const nextPoint = polygon[(i + 1)%polygon.length];
         const nextHash = hashPoint(nextPoint, toWorldCoordinates);
         return acc.set(
@@ -331,15 +336,31 @@ window.onload = () => {
       }, acc);
     }, acc);
   }, new Map<number, Map<number, Face>>());
+
   // remove duplicate or disconnected faces
   faces = faces.filter(face => {
 
     const { polygons, toWorldCoordinates } = face;
 
+    return polygons.every(polygon => {
+      return polygon.every((current, i) => {
+        const next = polygon[(i + 1)%polygon.length];
+        const currentHash = hashPoint(current, toWorldCoordinates);
+        const nextHash = hashPoint(next, toWorldCoordinates);    
+        const adjacentFace = pointAdjacency.get(currentHash).get(nextHash);
+        if (adjacentFace != face) {
+          console.log(adjacentFace);
+        }
+        return face == adjacentFace;
+      });
+    });
+
     const currentHash = hashPoint(polygons[0][0], toWorldCoordinates);
     const nextHash = hashPoint(polygons[0][1], toWorldCoordinates);
     // only keep faces that map to themselves (overlapping faces will map to another face)
-    return pointAdjacency.get(currentHash).get(nextHash) == face;
+    const adjacentFace = pointAdjacency.get(currentHash).get(nextHash);
+
+    return adjacentFace == face;
       // and faces that connect to something
       // && !polygons.some(polygon => polygon.some((p, i) => {
       //   const n = polygon[(i + 1)%polygon.length];
@@ -368,8 +389,6 @@ window.onload = () => {
   //ctx.strokeStyle = 'white';
   ctx.lineCap = 'round';
 
-  const pointCache = new Map<number, [number, number, number]>();
-
   const [points, colors, textureCoords, indices] = faces.reduce<[
     [number, number, number][],
     [number, number, number, number][],
@@ -378,7 +397,6 @@ window.onload = () => {
   ]>(
     ([points, colors, textureCoords, indices], face) => {
       const { polygons, toWorldCoordinates, rotateToWorldCoordinates, inverted = 0 } = face;
-      //ctx.fillStyle = `rgb(${Math.random() * 125 | 0}, ${Math.random() * 125 | 0}, ${Math.random() * 125 | 0})`;
 
       const polygonPoints = polygons.flat(1);
       const [[minX, minY], [maxX, maxY]] = polygonPoints.reduce<[[number, number, number], [number, number, number]]>(([min, max], point) => {
@@ -407,11 +425,11 @@ window.onload = () => {
       ctx.fillRect(originalTextureX, textureY, width, height);
       ctx.globalCompositeOperation = 'destination-out';
       polygons.forEach(polygon => {
-        polygon.forEach((p, i) => {
-          const n = polygon[(i + 1)%polygon.length];
-          const adjacentFace = pointAdjacency
-              .get(hashPoint(n, toWorldCoordinates))
-              .get(hashPoint(p, toWorldCoordinates));
+        polygon.forEach((currentPoint, i) => {
+          const currentHash = hashPoint(currentPoint, toWorldCoordinates);
+          const nextPoint = polygon[(i + 1)%polygon.length];
+          const nextHash = hashPoint(nextPoint, toWorldCoordinates);
+          const adjacentFace = pointAdjacency.get(currentHash).get(nextHash);
           // TODO filter out unconnected faces
           const normal = vec3.transformMat4(
             vec3.create(), NORMAL_Z, rotateToWorldCoordinates,
@@ -423,7 +441,7 @@ window.onload = () => {
           if (lineWidth > EPSILON || true) {
             ctx.lineWidth = lineWidth > EPSILON ? BASE_LINE_WIDTH : BASE_LINE_WIDTH / 4;
             ctx.beginPath();
-            [p, n].forEach(([px, py]) => {
+            [currentPoint, nextPoint].forEach(([px, py]) => {
               ctx.lineTo(
                 originalTextureX + (px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER, 
                 textureY + (py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER,
@@ -434,6 +452,7 @@ window.onload = () => {
         });
       });
         
+      // hashes to transformed points?
       const hashesToPoints = polygonPoints.reduce((acc, point) => {
         const pointHash = hashPoint(point);
         return acc.set(pointHash, [...point] as [number, number, number]);
@@ -469,12 +488,8 @@ window.onload = () => {
         return [...indices, ...newIndices];
       }, []);
       const transformedPoints = uniquePoints.map<[number, number, number]>(point => {
-        const worldPoint = [...vec3.transformMat4(
-          vec3.create(), point, toWorldCoordinates,
-        )] as [number, number, number];
-        const worldPointHash = hashPoint(worldPoint);
-        const cachedWorldPoint = pointCache.get(worldPointHash) || worldPoint;
-        pointCache.set(worldPointHash, cachedWorldPoint);
+        const worldPointHash = hashPoint(point, toWorldCoordinates);
+        const cachedWorldPoint = pointCache.get(worldPointHash);
         return cachedWorldPoint;
       });
       return [
@@ -585,6 +600,6 @@ function hashPoint(point: ReadonlyVec3, transform?: ReadonlyMat4) {
       ? vec3.transformMat4(vec3.create(), point, transform)
       : point;
   return [...transformed].reduce((acc, v) => {
-    return (acc << 10) | (Math.round((v+4) * 128) & 1023);
+    return (acc << 10) | (Math.round((v+8) * 64) & 1023);
   }, 0);
 }
