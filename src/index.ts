@@ -204,11 +204,11 @@ window.onload = () => {
     //[shape5, [shape6]],
     // [shape7, [shape6]],
     //[shape1, [shape2, shape3, shape4, shape6]],
-    [disc, columns],
+    //[disc, columns],
     // [disc, [column]],
     //[column, []],
     //[columns[0], []],
-    //...columns.map<Shape>(column => [column, []]),
+    ...columns.map<Shape>(column => [column, []]),
   ] as const);
   const negativeShapes = shapes.map(([addition, subtractions]) => {
     return [
@@ -216,6 +216,21 @@ window.onload = () => {
       subtractions.map(subtraction => convexShapeExpand(subtraction, -BORDER_EXPAND)),
     ] as const;
   });
+
+  const pointCache: [number, number, number][] = [];
+
+  function getWorldPoint(point: ReadonlyVec3, toWorldCoordinates: ReadonlyMat4): [number, number, number] {
+    const worldPoint = [...vec3.transformMat4(vec3.create(), point, toWorldCoordinates)] as [number, number, number];
+    const cachedWorldPoint = pointCache.find(cachedPoint => {
+      const d = vec3.distance(cachedPoint, worldPoint);
+      return d < EPSILON * 10;
+    });
+    if (cachedWorldPoint != null) {
+      return cachedWorldPoint;
+    }
+    pointCache.push(worldPoint);
+    return worldPoint;
+  }
 
   let faces: MaybeInvertedFace[] = [shapes, negativeShapes].map((shapes, i) => {
     const faces = decompose(shapes);
@@ -228,7 +243,7 @@ window.onload = () => {
       return {
         polygons: polygons.map(polygon => (i ? [...polygon].reverse() : polygon).filter((p, i, a) => {
           const n = a[(i + 1)%a.length];
-          return hashPoint(n, toWorldCoordinates) != hashPoint(p, toWorldCoordinates);
+          return getWorldPoint(n, toWorldCoordinates) != getWorldPoint(p, toWorldCoordinates);
         })).filter(polygon => polygon.length > 2),
         rotateToWorldCoordinates,
         toWorldCoordinates,
@@ -242,8 +257,7 @@ window.onload = () => {
     polygons.map(polygon => {
       return polygon.map(point => {
         const worldPoint = vec3.transformMat4(vec3.create(), point, toWorldCoordinates);
-        const hash = hashPoint(worldPoint); 
-        return [...worldPoint, hash];
+        return [...worldPoint];
       });
     })
   )));
@@ -317,48 +331,42 @@ window.onload = () => {
     uniform => gl.getUniformLocation(program, uniform)
   );
 
-  const pointCache = new Map<number, [number, number, number]>();
   const pointAdjacency = faces.reduce((acc, face) => {
     const { polygons, toWorldCoordinates } = face;
     return polygons.reduce((acc, polygon) => {
       return polygon.reduce((acc, currentPoint, i) => {
-        const currentWorldPoint = [...vec3.transformMat4(
-          vec3.create(), currentPoint, toWorldCoordinates,
-        )] as [number, number, number];
-        const currentHash = hashPoint(currentWorldPoint);
-        pointCache.set(currentHash, currentWorldPoint);
-        const nextPoint = polygon[(i + 1)%polygon.length];
-        const nextHash = hashPoint(nextPoint, toWorldCoordinates);
+        const currentWorldPoint = getWorldPoint(currentPoint, toWorldCoordinates);
+        const nextWorldPoint = getWorldPoint(polygon[(i + 1)%polygon.length], toWorldCoordinates);
         return acc.set(
-          currentHash,
-          (acc.get(currentHash) || new Map()).set(nextHash, face),
+          currentWorldPoint,
+          (acc.get(currentWorldPoint) || new Map()).set(nextWorldPoint, face),
         );
       }, acc);
     }, acc);
-  }, new Map<number, Map<number, Face>>());
+  }, new Map<ReadonlyVec3, Map<ReadonlyVec3, Face>>());
 
   // remove duplicate or disconnected faces
   faces = faces.filter(face => {
 
     const { polygons, toWorldCoordinates } = face;
 
-    return polygons.every(polygon => {
-      return polygon.every((current, i) => {
-        const next = polygon[(i + 1)%polygon.length];
-        const currentHash = hashPoint(current, toWorldCoordinates);
-        const nextHash = hashPoint(next, toWorldCoordinates);    
-        const adjacentFace = pointAdjacency.get(currentHash).get(nextHash);
+    return polygons.every((polygon, h) => {
+      return polygon.every((currentPoint, i) => {
+        const nextPoint = polygon[(i + 1)%polygon.length];
+        const currentWorldPoint = getWorldPoint(currentPoint, toWorldCoordinates);
+        const nextWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
+        const adjacentFace = pointAdjacency.get(currentWorldPoint).get(nextWorldPoint);
         if (adjacentFace != face) {
-          console.log(adjacentFace);
+          console.log(adjacentFace, h, i);
         }
         return face == adjacentFace;
       });
     });
 
-    const currentHash = hashPoint(polygons[0][0], toWorldCoordinates);
-    const nextHash = hashPoint(polygons[0][1], toWorldCoordinates);
+    const currentWorldPoint = getWorldPoint(polygons[0][0], toWorldCoordinates);
+    const nextWorldPoint = getWorldPoint(polygons[0][1], toWorldCoordinates);
     // only keep faces that map to themselves (overlapping faces will map to another face)
-    const adjacentFace = pointAdjacency.get(currentHash).get(nextHash);
+    const adjacentFace = pointAdjacency.get(currentWorldPoint).get(nextWorldPoint);
 
     return adjacentFace == face;
       // and faces that connect to something
@@ -376,8 +384,7 @@ window.onload = () => {
     polygons.map(polygon => {
       return polygon.map(point => {
         const worldPoint = vec3.transformMat4(vec3.create(), point, toWorldCoordinates);
-        const hash = hashPoint(worldPoint); 
-        return [...worldPoint, hash];
+        return [...worldPoint];
       });
     })
   )));
@@ -396,7 +403,13 @@ window.onload = () => {
     number[],
   ]>(
     ([points, colors, textureCoords, indices], face) => {
-      const { polygons, toWorldCoordinates, rotateToWorldCoordinates, inverted = 0 } = face;
+      const {
+        polygons,
+        toWorldCoordinates,
+        rotateToWorldCoordinates,
+        inverted = 0,
+      } = face;
+      const fromWorldCoordinates = mat4.invert(mat4.create(), toWorldCoordinates);
 
       const polygonPoints = polygons.flat(1);
       const [[minX, minY], [maxX, maxY]] = polygonPoints.reduce<[[number, number, number], [number, number, number]]>(([min, max], point) => {
@@ -426,10 +439,10 @@ window.onload = () => {
       ctx.globalCompositeOperation = 'destination-out';
       polygons.forEach(polygon => {
         polygon.forEach((currentPoint, i) => {
-          const currentHash = hashPoint(currentPoint, toWorldCoordinates);
+          const currentWorldPoint = getWorldPoint(currentPoint, toWorldCoordinates);
           const nextPoint = polygon[(i + 1)%polygon.length];
-          const nextHash = hashPoint(nextPoint, toWorldCoordinates);
-          const adjacentFace = pointAdjacency.get(currentHash).get(nextHash);
+          const nextWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
+          const adjacentFace = pointAdjacency.get(currentWorldPoint).get(nextWorldPoint);
           // TODO filter out unconnected faces
           const normal = vec3.transformMat4(
             vec3.create(), NORMAL_Z, rotateToWorldCoordinates,
@@ -451,15 +464,15 @@ window.onload = () => {
           }
         });
       });
-        
+
       // hashes to transformed points?
       const hashesToPoints = polygonPoints.reduce((acc, point) => {
-        const pointHash = hashPoint(point);
-        return acc.set(pointHash, [...point] as [number, number, number]);
-      }, new Map<number, [number, number, number]>());
-      const uniquePoints = [...hashesToPoints.values()];
+        return acc.add(getWorldPoint(point, toWorldCoordinates));
+      }, new Set<[number, number, number]>());
+      const uniquePoints = [...hashesToPoints];
 
-      const newTextureCoords = uniquePoints.map<[number, number]>(([px, py]) => {
+      const newTextureCoords = uniquePoints.map<[number, number]>((worldPoint) => {
+        const [px, py] = vec3.transformMat4(vec3.create(), worldPoint, fromWorldCoordinates);
         const x = ((px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER + originalTextureX)/canvas2d.width;
         const y = ((py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER + textureY)/canvas2d.height;
         return [x, y];
@@ -467,17 +480,15 @@ window.onload = () => {
 
       const outsideColor: [number, number, number, number] = [.4, .4, .6, .3];
       const insideColor: [number, number, number, number] = [.1, .1, .1, .6];
-      const newColors = uniquePoints.map(point => {
-        const worldPoint = vec3.transformMat4(vec3.create(), point, toWorldCoordinates);
+      const newColors = uniquePoints.map(worldPoint => {
         const inside = shapes.some(([addition]) => convexShapeContainPoint(addition, worldPoint));
         return inside ? insideColor : outsideColor;
       });
 
       const newIndices = polygons.reduce<number[]>((indices, polygon, i) => {
         const polygonIndices = polygon.map(point => {
-          const hash = hashPoint(point);
-          const uniquePoint = hashesToPoints.get(hash);
-          return uniquePoints.indexOf(uniquePoint);
+          const worldPoint = getWorldPoint(point, toWorldCoordinates);
+          return uniquePoints.indexOf(worldPoint);
         });
         const originIndex = polygonIndices[0];
         const newIndices = polygonIndices.slice(1, -1).map((currentIndex, i) => {
@@ -487,13 +498,8 @@ window.onload = () => {
         }).flat(1).map(v => v + points.length);
         return [...indices, ...newIndices];
       }, []);
-      const transformedPoints = uniquePoints.map<[number, number, number]>(point => {
-        const worldPointHash = hashPoint(point, toWorldCoordinates);
-        const cachedWorldPoint = pointCache.get(worldPointHash);
-        return cachedWorldPoint;
-      });
       return [
-        [...points, ...transformedPoints],
+        [...points, ...uniquePoints],
         [...colors, ...newColors],
         [...textureCoords, ...newTextureCoords],
         [...indices, ...newIndices],
@@ -594,12 +600,3 @@ window.onload = () => {
   }
   animate(0);
 };
-
-function hashPoint(point: ReadonlyVec3, transform?: ReadonlyMat4) {
-  const transformed = transform
-      ? vec3.transformMat4(vec3.create(), point, transform)
-      : point;
-  return [...transformed].reduce((acc, v) => {
-    return (acc << 10) | (Math.round((v+8) * 64) & 1023);
-  }, 0);
-}
