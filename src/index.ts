@@ -10,6 +10,7 @@ type MaybeInvertedFace = Face & {
   inverted: number,
 };
 
+const TEXTURE_DIMENSION = 4096;
 const TEXTURE_SCALE = 64;
 const TEXTURE_BUFFER = 10;
 const BASE_LINE_WIDTH = 1;
@@ -68,12 +69,24 @@ const FRAGMENT_SHADER = `#version 300 es
   uniform mat4 ${U_MODEL_ROTATION_MATRIX};
   out vec4 ${O_COLOR};
 
+  mat4 x = mat4(
+    1, 0, 0, 0,
+    0, 1, 0, 1,
+    0, 0, 1, 0,
+    0, 0, 0, 1
+  );
+
   void main(void) {
     vec4 p = texture(${U_TEXTURE}, ${V_TEXTURE_COORD});
     vec3 n = (p.xyz/length(p.xyz) - .5) * 2.;
     //vec3 n = ${V_NORMAL}.xyz;
     ${O_COLOR} = vec4(
-      mix(${V_COLOR}.rgb * (dot(normalize(n), vec3(.2, .7, -.5)) + 1.)/2., ${V_COLOR}.rgb, max(${V_COLOR}.a, (1.-p.a)*2.)),
+      mix(
+        (texture(${U_TEXTURE}, ${V_POSITION}.xy).rgb + texture(${U_TEXTURE}, ${V_POSITION}.xz).rgb + texture(${U_TEXTURE}, ${V_POSITION}.zy).rgb)/3.,
+        //${V_COLOR}.rgb * (dot(normalize(n), vec3(.2, .7, -.5)) + 1.)/2.,
+        vec3(1.),
+        max(${V_COLOR}.a, (1. - p.a)/.9)
+      ),
       ${V_COLOR}.a
     );
   }
@@ -156,7 +169,17 @@ window.onload = () => {
     toPlane(0, 0, -1, -.2),
   ];
   
-  const segmentsz = 10;
+  // cube
+  const shape8: ConvexShape = [
+    toPlane(0, 0, 1, 1),
+    toPlane(0, 0, -1, 1),
+    toPlane(1, 0, 0, 1),
+    toPlane(-1, 0, 0, 1),
+    toPlane(0, 1, 0, 1),
+    toPlane(0, -1, 0, 1),
+  ];
+  
+  const segmentsz = 3;
   const segmentsy = 2;
   const ry = .3;
   const rz = 1;
@@ -209,12 +232,13 @@ window.onload = () => {
   }).filter(v => v != null);
   
   const shapes: readonly Shape[] = ([
+    //[shape8, [shape6]],
     //[shape1, []],
-    //[shape5, [shape6]],
+    [shape5, [shape6]],
     //[shape7, [shape6]],
-    //[shape1, [shape2, shape3, shape4, shape6]],
-    [disc, columns],
-    // [disc, [column]],
+    [shape1, [shape2, shape3, shape4, shape6]],
+    //[disc, columns],
+    //[disc, []],
     //[column, []],
     //[columns[0], []],
     //...columns.map<Shape>(column => [column, []]),
@@ -272,8 +296,8 @@ window.onload = () => {
   )));
 
   const canvas2d = document.getElementById("canvas2d") as HTMLCanvasElement;
-  canvas2d.width = 4096;
-  canvas2d.height = 4096;
+  canvas2d.width = TEXTURE_DIMENSION;
+  canvas2d.height = TEXTURE_DIMENSION;
   const ctx = canvas2d.getContext('2d');
   
   const canvas3d = document.getElementById("canvas3d") as HTMLCanvasElement;
@@ -368,9 +392,6 @@ window.onload = () => {
         const currentWorldPoint = getWorldPoint(currentPoint, toWorldCoordinates);
         const nextWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
         const adjacentFace = pointAdjacency.get(currentWorldPoint).get(nextWorldPoint);
-        if (adjacentFace != face) {
-          console.log(adjacentFace, h, i);
-        }
         return face == adjacentFace;
       });
     });
@@ -411,19 +432,19 @@ window.onload = () => {
     new Map(),
   );
 
-  console.log(pointFaces);
-  /* caculate normals for each point in the faces */
-  const pointNormals = new Map<[number, number, number], [number, number, number]>();
+  console.log('point faces', pointFaces);
+  /* caculate normals for each point in the faces
+  const pointNormals = new Map<[number, number, number], [number, number, number][]>();
 
   faces.forEach(face => {
     const { polygons, toWorldCoordinates } = face;
     const pointPolygons = [...pointFaces.entries()].reduce((acc, [worldPoint, faces]) => {
       if (faces.has(face)) {
         polygons.forEach(polygon => {
-          const currentPointIndex = polygon.findIndex(point => {
+          const inPolygon = polygon.some(point => {
             return getWorldPoint(point, toWorldCoordinates) == worldPoint;
           });
-          if (currentPointIndex >= 0) {
+          if (inPolygon) {
             acc.set(worldPoint, (acc.get(worldPoint) || new Set()).add(polygon));
           }
         });
@@ -433,7 +454,7 @@ window.onload = () => {
 
     let unmeasuredPointsAndPolygons = [...pointPolygons.entries()].map(([startWorldPoint, polygons]) => {
       return [...polygons].map(polygon => [startWorldPoint, polygon] as const);
-    }).flat(1);
+    }).flat(1).sort(([p1], [p2]) => pointFaces.get(p2).size - pointFaces.get(p1).size);
 
     while (unmeasuredPointsAndPolygons.length) {
       unmeasuredPointsAndPolygons = unmeasuredPointsAndPolygons.filter(([startWorldPoint, polygon]) => {
@@ -441,12 +462,14 @@ window.onload = () => {
         let startNormal: [number, number, number] | undefined;
         if (faces.size > 2) {
           // it's good as is
-          startNormal = [...[...faces].reduce<ReadonlyVec3>((acc, { rotateToWorldCoordinates }) => {
+          startNormal = [...vec3.normalize(vec3.create(), [...faces].reduce<ReadonlyVec3>((acc, { rotateToWorldCoordinates }) => {
             const normal = vec3.transformMat4(vec3.create(), NORMAL_Z, rotateToWorldCoordinates);
             return vec3.add(vec3.create(), acc, vec3.scale(vec3.create(), normal, 1/faces.size));
-          }, [0, 0, 0])] as [number, number, number];
-        } else {
-          startNormal = pointNormals.get(startWorldPoint);
+          }, [0, 0, 0]))] as [number, number, number];
+          pointNormals.set(startWorldPoint, [startNormal]);
+        } else if (faces.size > 1) {
+          // should only ever be one
+          startNormal = pointNormals.get(startWorldPoint)?.[0];
         }
         if (startNormal) {
           // find the index of the point in the polygon
@@ -460,8 +483,8 @@ window.onload = () => {
           // find the adjacent polygon on the next point that has the same angle
           //console.log(angle);
           let endNormal: [number, number, number] | undefined;
-          const worldPoints: [number, number, number][] = [];
           let currentWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
+          const worldPoints: [number, number, number][] = [currentWorldPoint];
           let keepGoing: boolean | number = 1;
           while (!endNormal && keepGoing) {
             // find a polygon with the next line matching this angle
@@ -476,18 +499,21 @@ window.onload = () => {
               const nextPoint = polygon[nextIndex];
               const nextAngle = Math.atan2(nextPoint[1] - point[1], nextPoint[0] - point[0]);
               // check angle delta
-              if (Math.abs(nextAngle - angle) < EPSILON) {
+              if (Math.abs(nextAngle - angle)%(Math.PI*2) < EPSILON) {
                 currentWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
-                worldPoints.push(currentWorldPoint);
                 const faces = pointFaces.get(currentWorldPoint);
                 if (faces.size > 2) {
                   // it's good as is
-                  endNormal = [...[...faces].reduce<ReadonlyVec3>((acc, { rotateToWorldCoordinates }) => {
+                  endNormal = [...vec3.normalize(vec3.create(), [...faces].reduce<ReadonlyVec3>((acc, { rotateToWorldCoordinates }) => {
                     const normal = vec3.transformMat4(vec3.create(), NORMAL_Z, rotateToWorldCoordinates);
                     return vec3.add(vec3.create(), acc, vec3.scale(vec3.create(), normal, 1/faces.size));
-                  }, [0, 0, 0])] as [number, number, number];
-                } else {
-                  endNormal = pointNormals.get(startWorldPoint);
+                  }, [0, 0, 0]))] as [number, number, number];
+                } else if (faces.size > 1) {
+                  // should only ever be one
+                  endNormal = pointNormals.get(currentWorldPoint)?.[0];
+                } 
+                if (!endNormal) {
+                  worldPoints.push(currentWorldPoint);
                 }
                 return 1;
               }
@@ -496,25 +522,38 @@ window.onload = () => {
           if (endNormal) {
             const endWorldPoint = worldPoints[worldPoints.length-1];
             const maximumDistance = vec3.distance(startWorldPoint, endWorldPoint);
-            worldPoints.slice(0, -1).forEach(worldPoint => {
-              const distance = vec3.distance(startWorldPoint, worldPoint);
-              const scale = distance/maximumDistance;
-              const normal = vec3.normalize(
-                vec3.create(),
-                vec3.add(
+            worldPoints.forEach(worldPoint => {
+              const faces = pointFaces.get(worldPoint);
+              const normals = pointNormals.get(worldPoint) || [];
+              if (faces.size < 2 || !normals.length) {
+                const distance = vec3.distance(startWorldPoint, worldPoint);
+                const scale = distance/maximumDistance;
+                const normal = vec3.normalize(
                   vec3.create(),
-                  vec3.scale(vec3.create(), startNormal, 1 - scale),
-                  vec3.scale(vec3.create(), endNormal, scale),
-                ),
-              );
-              pointNormals.set(worldPoint, [...normal] as [number, number, number]);
+                  vec3.add(
+                    vec3.create(),
+                    vec3.scale(vec3.create(), startNormal, 1 - scale),
+                    vec3.scale(vec3.create(), endNormal, scale),
+                  ),
+                );
+                pointNormals.set(
+                  worldPoint,
+                  normals.concat(
+                    [[...normal] as [number, number, number]],
+                  ),
+                );  
+              }
             });
           }
-        }      
+          return !endNormal && worldPoints.length > 1;
+        }
+        // don't measure internal points, should happen as part of measuring external points
+        return faces.size > 1;
       });
     }
   });
-  console.log(pointNormals);
+  console.log('point normals', pointNormals);
+  */
 
   console.log(faces.map(({ polygons, toWorldCoordinates }) => (
     polygons.map(polygon => {
@@ -526,10 +565,19 @@ window.onload = () => {
   )));
 
 
+
+  const materials = 4;
+  const materialDimension = TEXTURE_DIMENSION/materials;
   let textureX = 0;
-  let textureY = 0;
+  let textureY = materialDimension;
   let textureMaxHeight = 0;
-  ctx.lineCap = 'round';
+  //ctx.lineCap = 'round';
+
+  // add in some textures
+  for (let materialId = 1; materialId < materials; materialId++){
+    ctx.fillStyle = `rgba(${Math.random()* 255 | 0}, ${Math.random() * 255 | 0}, ${Math.random() * 255 | 0})`;
+    ctx.fillRect(materialId * materialDimension, 0, materialDimension, materialDimension);
+  }
 
   const [points, colors, normals, textureCoords, indices] = faces.reduce<[
     [number, number, number][],
@@ -557,8 +605,8 @@ window.onload = () => {
         [...polygonPoints[0] as [number, number, number]],
       ]);
 
-      const width = (maxX - minX) * TEXTURE_SCALE + TEXTURE_BUFFER * 2;
-      const height = (maxY - minY) * TEXTURE_SCALE + TEXTURE_BUFFER * 2;
+      const width = (maxX - minX) * TEXTURE_SCALE + TEXTURE_BUFFER * 2 | 0;
+      const height = (maxY - minY) * TEXTURE_SCALE + TEXTURE_BUFFER * 2 | 0;
       
       // TODO ignore inverted face textures
       if (textureX + width > ctx.canvas.width) {
@@ -624,18 +672,27 @@ window.onload = () => {
       
             lineConnections.set(currentWorldPoint, nextWorldPoint);
           }
-
         });
       });
-      // draw background under
-      ctx.globalCompositeOperation = 'destination-over';
 
-      ctx.fillStyle = normalToColor(normal);
-      ctx.fillRect(originalTextureX, textureY, width, height);
+      const imageData = ctx.createImageData(width, height);
+      for(let y=0; y<height; y++) {
+        for(let x=0; x<width; x++) {
+          const index = (y * width + x) * 4;
+          imageData.data.set([...normal.map(v => Math.round((v + 1) * 127.5)), 255], index);
+        }
+      }
+      ctx.putImageData(imageData, originalTextureX, textureY);
+
+
+      // draw background under
+      // ctx.globalCompositeOperation = 'source-over';
+      // ctx.fillStyle = normalToColor(normal);
+      // ctx.fillRect(originalTextureX, textureY, width, height);
       // erase lines
       ctx.globalCompositeOperation = 'destination-out';
       ctx.lineWidth = BASE_LINE_WIDTH;
-      ctx.fillStyle = 'rgba(0, 0, 0, .5)';
+      ctx.fillStyle = 'rgba(0, 0, 0, .1)';
       const lineConnectionValues = new Set(lineConnections.values());
       while (lineConnections.size) {
         ctx.beginPath();
@@ -695,21 +752,29 @@ window.onload = () => {
         return color;
       });
       const newNormals = uniquePoints.map(worldPoint => {
-        // const normal = pointNormals.get(worldPoint);
-        // return normal;
-        const faces = pointFaces.get(worldPoint);
-        const normal = [...faces].reduce<ReadonlyVec3>((acc, face) => {
-          return vec3.add(
-            vec3.create(),
-            acc,
-            vec3.transformMat4(
-              vec3.create(),
-              NORMAL_Z,
-              face.rotateToWorldCoordinates,
-            ),
-          );
-        }, [0, 0, 0]);
-        return [...vec3.scale(vec3.create(), normal, 1/faces.size)] as [number, number, number];
+        // const normals = pointNormals.get(worldPoint);
+        // const normal = normals.reduce<vec3>((acc, normal) => {
+        //   return vec3.add(
+        //     acc,
+        //     acc,
+        //     normal
+        //   );
+        // }, [0, 0, 0]);
+        // return [...vec3.normalize(normal, normal)] as [number, number, number];
+        // const faces = pointFaces.get(worldPoint);
+        // const normal = [...faces].reduce<vec3>((acc, face) => {
+        //   return vec3.add(
+        //     vec3.create(),
+        //     acc,
+        //     vec3.transformMat4(
+        //       vec3.create(),
+        //       NORMAL_Z,
+        //       face.rotateToWorldCoordinates,
+        //     ),
+        //   );
+        // }, [0, 0, 0]);
+        // return [...vec3.normalize(normal, normal)] as [number, number, number];
+        return normal;
       });
 
       const newIndices = polygons.reduce<number[]>((indices, polygon, i) => {
