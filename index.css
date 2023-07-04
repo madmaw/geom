@@ -10,14 +10,18 @@ body {
   position: absolute;
 }
 
-#canvas2d, #canvas3d {
+#canvasLines, #canvas3d, #canvasTexture0 {
   width: 100%;
-  height: 50%;
+  height: 33%;
   position: absolute;
 }
 
-#canvas2d {
-  top: 50%;
+#canvasLines {
+  top: 33%;
+}
+
+#canvasTexture0 {
+  top: 67%;
 }
 
 #fps {

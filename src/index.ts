@@ -5,17 +5,19 @@ import { ReadonlyMat4, ReadonlyVec3, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 import { EPSILON, NORMAL_Z } from "./geometry/constants";
 import { ConvexPolygon, Face } from "./geometry/face";
+import { Line, lineDistance } from "./geometry/line";
 
 type MaybeInvertedFace = Face & {
   inverted: number,
 };
 
-const TEXTURE_DIMENSION = 4096;
-const TEXTURE_SCALE = 64;
-const TEXTURE_BUFFER = 10;
+const LINE_TEXTURE_DIMENSION = 4096;
+const LINE_TEXTURE_SCALE = 64;
+const LINE_TEXTURE_BUFFER = 10;
 const BASE_LINE_WIDTH = 1;
 const BASE_EDGE_SMOOTHING = 20;
 const BORDER_EXPAND = 0.02;
+const MATERIAL_TEXTURE_DIMENSION = 256;
 
 const A_VERTEX_POSITION = "aVertexPosition";
 const A_VERTEX_COLOR = "aVertexColor";
@@ -25,7 +27,9 @@ const A_VERTEX_TEXTURE_COORD = 'aVertexTextureCoord';
 const U_MODEL_VIEW_MATRIX = "uModelViewMatrix";
 const U_MODEL_ROTATION_MATRIX = 'uModelRotationMatrix';
 const U_PROJECTION_MATRIX = "uProjectionMatrix";
-const U_TEXTURE = 'uTexture';
+const U_LINE_TEXTURE = 'uLineTexture';
+const U_MATERIAL_TEXTURE = 'uMaterialTexture';
+const U_MATERIAL_COLOR = 'uMaterialColor';
 
 const V_COLOR = 'vColor';
 const V_POSITION = 'vPosition';
@@ -65,27 +69,34 @@ const FRAGMENT_SHADER = `#version 300 es
   in vec3 ${V_POSITION};
   in vec4 ${V_NORMAL};
   in vec2 ${V_TEXTURE_COORD};
-  uniform sampler2D ${U_TEXTURE};
+  uniform sampler2D ${U_LINE_TEXTURE};
+  uniform sampler2D ${U_MATERIAL_TEXTURE};
+  uniform vec4 ${U_MATERIAL_COLOR};
   uniform mat4 ${U_MODEL_ROTATION_MATRIX};
   out vec4 ${O_COLOR};
 
-  mat4 x = mat4(
-    1, 0, 0, 0,
-    0, 1, 0, 1,
-    0, 0, 1, 0,
-    0, 0, 0, 1
+  mat4 xy = mat4(
+    1., 0., 0., 0.,
+    0., 1., 0., 0.,
+    0., 0., 1., 0.,
+    0., 0., 0., 1.
   );
 
+  vec3 t(vec2 p) {
+    return texture(${U_MATERIAL_TEXTURE}, p).rgb;
+  }
+
   void main(void) {
-    vec4 p = texture(${U_TEXTURE}, ${V_TEXTURE_COORD});
-    vec3 n = (p.xyz/length(p.xyz) - .5) * 2.;
-    //vec3 n = ${V_NORMAL}.xyz;
+    vec4 p = texture(${U_LINE_TEXTURE}, ${V_TEXTURE_COORD});
+    float l = max(p.r, max(p.g, max(p.b, 2. - 2. * p.a)));
+    //vec3 n = (p.xyz - .5) * 2.;
+    vec3 m = (t(${V_POSITION}.xy) + t(${V_POSITION}.xz) + t(${V_POSITION}.zy))/3.; 
+    vec3 n = ${V_NORMAL}.xyz;
     ${O_COLOR} = vec4(
       mix(
-        (texture(${U_TEXTURE}, ${V_POSITION}.xy).rgb + texture(${U_TEXTURE}, ${V_POSITION}.xz).rgb + texture(${U_TEXTURE}, ${V_POSITION}.zy).rgb)/3.,
-        //${V_COLOR}.rgb * (dot(normalize(n), vec3(.2, .7, -.5)) + 1.)/2.,
+        ${U_MATERIAL_COLOR}.rgb * (dot(normalize(n), vec3(.2, .7, -.5)) + 1.)/2.,
         vec3(1.),
-        max(${V_COLOR}.a, (1. - p.a)/.9)
+        max(${V_COLOR}.a, l)
       ),
       ${V_COLOR}.a
     );
@@ -179,8 +190,8 @@ window.onload = () => {
     toPlane(0, -1, 0, 1),
   ];
   
-  const segmentsz = 3;
-  const segmentsy = 2;
+  const segmentsz = 6;
+  const segmentsy = 5;
   const ry = .3;
   const rz = 1;
   const hole = rz;
@@ -265,7 +276,7 @@ window.onload = () => {
     return worldPoint;
   }
 
-  let faces: MaybeInvertedFace[] = [shapes, negativeShapes].map((shapes, i) => {
+  let faces: MaybeInvertedFace[] = [shapes, /*negativeShapes*/].map((shapes, i) => {
     const faces = decompose(shapes);
     // reverse the face
     return faces.map<MaybeInvertedFace>(({
@@ -295,11 +306,11 @@ window.onload = () => {
     })
   )));
 
-  const canvas2d = document.getElementById("canvas2d") as HTMLCanvasElement;
-  canvas2d.width = TEXTURE_DIMENSION;
-  canvas2d.height = TEXTURE_DIMENSION;
-  const ctx = canvas2d.getContext('2d');
-  
+  const geometryLineCanvas = document.getElementById("canvasLines") as HTMLCanvasElement;
+  geometryLineCanvas.width = LINE_TEXTURE_DIMENSION;
+  geometryLineCanvas.height = LINE_TEXTURE_DIMENSION;
+  const ctx = geometryLineCanvas.getContext('2d');
+
   const canvas3d = document.getElementById("canvas3d") as HTMLCanvasElement;
   canvas3d.width = canvas3d.clientWidth;
   canvas3d.height = canvas3d.clientHeight;
@@ -358,10 +369,16 @@ window.onload = () => {
     uModelViewMatrix,
     uModelRotationMatrix,
     uProjectionMatrix,
+    uLineTexture,
+    uMaterialTexture,
+    uMaterialColor,
   ] = [
     U_MODEL_VIEW_MATRIX,
     U_MODEL_ROTATION_MATRIX,
     U_PROJECTION_MATRIX,
+    U_LINE_TEXTURE,
+    U_MATERIAL_TEXTURE,
+    U_MATERIAL_COLOR,
   ].map(
     uniform => gl.getUniformLocation(program, uniform)
   );
@@ -566,19 +583,50 @@ window.onload = () => {
 
 
 
-  const materials = 4;
-  const materialDimension = TEXTURE_DIMENSION/materials;
-  let textureX = 0;
-  let textureY = materialDimension;
-  let textureMaxHeight = 0;
+  // want a space so we can have transparent area to map outlines to
+  let textureX = LINE_TEXTURE_SCALE;
+  let textureY = 0;
+  let textureMaxHeight = LINE_TEXTURE_SCALE;
   //ctx.lineCap = 'round';
 
+  const materials = 1;
   // add in some textures
-  for (let materialId = 1; materialId < materials; materialId++){
-    ctx.fillStyle = `rgba(${Math.random()* 255 | 0}, ${Math.random() * 255 | 0}, ${Math.random() * 255 | 0})`;
-    ctx.fillRect(materialId * materialDimension, 0, materialDimension, materialDimension);
-  }
+  const materialCanvases = new Array(materials).fill(0).map((_, i) => {
+    const materialCanvas = document.getElementById('canvasTexture'+i) as HTMLCanvasElement;
+    materialCanvas.width = MATERIAL_TEXTURE_DIMENSION;
+    materialCanvas.height = MATERIAL_TEXTURE_DIMENSION;
+    const ctx = materialCanvas.getContext('2d');
+    const maxDepth = (i+1) * 30;
+    ctx.fillStyle = `rgba(127, 127, ${maxDepth}, 255)`;
+    ctx.fillRect(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
+    const imageData = ctx.getImageData(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
+    for (let i=0; i<10; i++) {
+      const d = Math.random() * maxDepth + maxDepth;
+      const r = d/2;
+      const x = Math.random() * MATERIAL_TEXTURE_DIMENSION;
+      const y = Math.random() * MATERIAL_TEXTURE_DIMENSION;
+      for (let px = x | 0; px < (x + d + 1 | 0); px++) {
+        for (let py = y | 0; py < (y + d + 1 | 0); py++) {
+          let index = ((py % MATERIAL_TEXTURE_DIMENSION) * MATERIAL_TEXTURE_DIMENSION
+              + (px % MATERIAL_TEXTURE_DIMENSION)) * 4;
+          const dx = px - x - r;
+          const dy = py - y - r;
+          const dzsq = r * r - dx * dx - dy * dy;
+          if (dzsq > 0) {
+            const dz = Math.sqrt(dzsq);
+            const [nx, ny] = vec3.normalize(vec3.create(), [dx, dy, dz]);
+            const depth = maxDepth - dz;
+            imageData.data.set([(nx + 1) * 127 | 0, (ny + 1) * 127 | 0, depth | 0, 255], index);  
+          }
+        }
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return materialCanvas;
+  });
 
+  // fill it with black
+  ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
   const [points, colors, normals, textureCoords, indices] = faces.reduce<[
     [number, number, number][],
     [number, number, number, number][],
@@ -605,8 +653,8 @@ window.onload = () => {
         [...polygonPoints[0] as [number, number, number]],
       ]);
 
-      const width = (maxX - minX) * TEXTURE_SCALE + TEXTURE_BUFFER * 2 | 0;
-      const height = (maxY - minY) * TEXTURE_SCALE + TEXTURE_BUFFER * 2 | 0;
+      const width = (maxX - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER * 2 | 0;
+      const height = (maxY - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER * 2 | 0;
       
       // TODO ignore inverted face textures
       if (textureX + width > ctx.canvas.width) {
@@ -617,14 +665,12 @@ window.onload = () => {
       const originalTextureX = textureX;
       textureX += width;
       textureMaxHeight = Math.max(height, textureMaxHeight);
-      function toTextureCoordinate([px, py]: ReadonlyVec3): [number, number] {
-        return [
-          originalTextureX + (px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER, 
-          textureY + (py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER,
-        ];
-      }
-      //ctx.globalCompositeOperation = 'lighter';
-      ctx.globalCompositeOperation = 'source-over';
+      // function toTextureCoordinate([px, py]: ReadonlyVec3): [number, number] {
+      //   return [
+      //     originalTextureX + (px - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER, 
+      //     textureY + (py - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER,
+      //   ];
+      // }
       const lineConnections = new Map<[number, number, number], [number, number, number]>();
       const normal = [...vec3.transformMat4(
         vec3.create(),
@@ -643,31 +689,30 @@ window.onload = () => {
           );
           const sinAngle = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
           if (sinAngle > EPSILON) {
-            const lineWidth = sinAngle * BASE_EDGE_SMOOTHING;
-            const p = toTextureCoordinate(currentPoint);
-            const n = toTextureCoordinate(nextPoint);
-            const [px, py] = p;
-            const [nx, ny] = n;
-            const a = Math.atan2(ny - py, nx - px);
-            const ap = a + Math.PI/2;
-            const cos = Math.cos(ap) * lineWidth/2;
-            const sin = Math.sin(ap) * lineWidth/2;
-            const gradient = ctx.createLinearGradient(
-              px + cos, 
-              py + sin,
-              px - cos,
-              py - sin,
-            );
-            gradient.addColorStop(1, normalToColor(adjacentNormal));
-            gradient.addColorStop(0, normalToColor(normal));
-            ctx.strokeStyle = gradient;
+            //const lineWidth = sinAngle * BASE_EDGE_SMOOTHING;
+            // const p = toTextureCoordinate(currentPoint);
+            // const n = toTextureCoordinate(nextPoint);
+            // const [px, py] = p;
+            // const [nx, ny] = n;
+            // const a = Math.atan2(ny - py, nx - px);
+            // const ap = a + Math.PI/2;
+            // const cos = Math.cos(ap) * lineWidth/2;
+            // const sin = Math.sin(ap) * lineWidth/2;
+            // const gradient = ctx.createLinearGradient(
+            //   px + cos, 
+            //   py + sin,
+            //   px - cos,
+            //   py - sin,
+            // );
+            // gradient.addColorStop(1, normalToColor(adjacentNormal));
+            // gradient.addColorStop(0, normalToColor(normal));
+            // ctx.strokeStyle = gradient;
 
-            ctx.lineWidth = lineWidth;
-            ctx.beginPath();
-            [p, n].forEach(point => {
-              ctx.lineTo(...point);
-            });
-  
+            // ctx.lineWidth = lineWidth;
+            // ctx.beginPath();
+            // [p, n].forEach(point => {
+            //   ctx.lineTo(...point);
+            // });  
             //ctx.stroke();
       
             lineConnections.set(currentWorldPoint, nextWorldPoint);
@@ -675,27 +720,41 @@ window.onload = () => {
         });
       });
 
-      const imageData = ctx.createImageData(width, height);
-      for(let y=0; y<height; y++) {
-        for(let x=0; x<width; x++) {
-          const index = (y * width + x) * 4;
-          imageData.data.set([...normal.map(v => Math.round((v + 1) * 127.5)), 255], index);
-        }
-      }
-      ctx.putImageData(imageData, originalTextureX, textureY);
+      // const imageData = ctx.createImageData(width, height);
+      // const normalArray = normal.map(v => Math.round((v + 1) * 127.5));
+      // const lineEntries = [...lineConnections.entries()];
+      // for(let py=0; py<height; py++) {
+      //   //const y = (py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER;
+      //   const y = (py - TEXTURE_BUFFER)/TEXTURE_SCALE + minY;
+      //   for(let px=0; px<width; px++) {
+      //     //const x = (px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER;
+      //     const x = (px - TEXTURE_BUFFER)/TEXTURE_SCALE + minX;
+      //     const index = (py * width + px) * 4;
+      //     // find the closest line
+      //     let minD = 1;
+      //     lineEntries.forEach(worldPoints => {
+      //       const line: Line = worldPoints.map(worldPoint => {
+      //         return vec3.transformMat4(
+      //           vec3.create(),
+      //           worldPoint,
+      //           fromWorldCoordinates,
+      //         );
+      //       }) as any; 
+      //       const d = lineDistance(line, [x, y]);
+      //       minD = Math.min(d, minD);
+      //     });
+      //     imageData.data.set([...normalArray, 127 + minD * 128 | 0], index);
+      //   }
+      // }
+      // ctx.putImageData(imageData, originalTextureX, textureY);
 
-
-      // draw background under
-      // ctx.globalCompositeOperation = 'source-over';
-      // ctx.fillStyle = normalToColor(normal);
-      // ctx.fillRect(originalTextureX, textureY, width, height);
-      // erase lines
-      ctx.globalCompositeOperation = 'destination-out';
       ctx.lineWidth = BASE_LINE_WIDTH;
-      ctx.fillStyle = 'rgba(0, 0, 0, .1)';
+      //ctx.lineCap = 'round';
+      // ctx.fillStyle = 'rgba(0, 0, 0, .5)';
+      // ctx.globalCompositeOperation = 'destination-out';
+      ctx.strokeStyle = '#F00';
       const lineConnectionValues = new Set(lineConnections.values());
       while (lineConnections.size) {
-        ctx.beginPath();
         const lineConnectionKeys = [...lineConnections.keys()];
         // find the start of a line
         let currentWorldPoint = lineConnectionKeys.find(point => {
@@ -707,26 +766,27 @@ window.onload = () => {
           // start anywhere with any point
           currentWorldPoint = lineConnectionKeys[0];
         }
+
+        ctx.beginPath();
         while (currentWorldPoint) {
           const nextWorldPoint = lineConnections.get(currentWorldPoint);
           lineConnections.delete(currentWorldPoint);
-          const [px, py] = vec3.transformMat4(
+          const [x, y] = vec3.transformMat4(
             vec3.create(),
             currentWorldPoint,
             fromWorldCoordinates,
           );
-          ctx.lineTo(
-            originalTextureX + (px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER, 
-            textureY + (py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER,
-          );
+          const px = originalTextureX + (x - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
+          const py = textureY + (y - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
+          ctx.lineTo(px, py);
+          // round corners
           currentWorldPoint = nextWorldPoint;
         }
-        // TODO probably don't need this
         if (closePath) {
           ctx.closePath();
         }
         ctx.stroke();
-      }      
+      }
 
       // hashes to transformed points?
       const hashesToPoints = polygonPoints.reduce((acc, point) => {
@@ -736,8 +796,8 @@ window.onload = () => {
 
       const newTextureCoords = uniquePoints.map<[number, number]>((worldPoint) => {
         const [px, py] = vec3.transformMat4(vec3.create(), worldPoint, fromWorldCoordinates);
-        const x = ((px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER + originalTextureX)/canvas2d.width;
-        const y = ((py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER + textureY)/canvas2d.height;
+        const x = ((px - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + originalTextureX)/geometryLineCanvas.width;
+        const y = ((py - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + textureY)/geometryLineCanvas.height;
         return [x, y];
       });
 
@@ -801,12 +861,15 @@ window.onload = () => {
     [[], [], [], [], []],
   );
 
-  const texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas2d);
-  //gl.texParameterf(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-  gl.generateMipmap(gl.TEXTURE_2D);
+  [geometryLineCanvas, ...materialCanvases].forEach((image, i) => {
+    gl.activeTexture(gl.TEXTURE0 + i);
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    //gl.texParameterf(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  });
 
 
   var vao = gl.createVertexArray();
@@ -869,6 +932,9 @@ window.onload = () => {
   const fpsDiv = document.getElementById('fps');
   const lastFrameTimes: number[] = [];
   gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
+  gl.uniform1i(uLineTexture, 0);
+  gl.uniform1i(uMaterialTexture, 1);
+  gl.uniform4f(uMaterialColor, .2, .2, .4, 0);
   let then = 0;
   function animate(now: number) {
     const delta = now - then;
@@ -896,5 +962,5 @@ window.onload = () => {
 };
 
 function normalToColor(normal: ReadonlyVec3) {
-  return `rgb(${[...normal].map(v => (v + 1) * 85/2).join()})`;
+  return `rgb(${[...normal].map(v => (v + 1) * 127).join()})`;
 }
