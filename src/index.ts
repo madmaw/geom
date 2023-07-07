@@ -22,7 +22,8 @@ const MATERIAL_TEXTURE_DIMENSION = 256;
 const A_VERTEX_POSITION = "aVertexPosition";
 const A_VERTEX_COLOR = "aVertexColor";
 const A_VERTEX_NORMAL_TRANSFORM = 'aVertexNormalTransform';
-const A_VERTEX_TEXTURE_COORD = 'aVertexTextureCoord';
+const A_VERTEX_LINE_TEXTURE_COORD = 'aVertexLineTextureCoord';
+const A_VERTEX_MATERIAL_TEXTURE_COORD = 'aVertexMaterialTextureCoord';
 
 const U_MODEL_VIEW_MATRIX = "uModelViewMatrix";
 const U_MODEL_ROTATION_MATRIX = 'uModelRotationMatrix';
@@ -30,12 +31,15 @@ const U_PROJECTION_MATRIX = "uProjectionMatrix";
 const U_LINE_TEXTURE = 'uLineTexture';
 const U_MATERIAL_TEXTURE = 'uMaterialTexture';
 const U_MATERIAL_COLOR = 'uMaterialColor';
+const U_CAMERA_POSITION = 'uCameraPosition';
 
 const V_COLOR = 'vColor';
-const V_POSITION = 'vPosition';
+const V_VERTEX_POSITION = 'vVertexPosition';
+const V_WORLD_POSITION = 'vWorldPosition';
 const V_NORMAL = 'vNormal';
 const V_NORMAL_TRANSFORM = 'vNormalTransform';
-const V_TEXTURE_COORD = 'vTextureCoord';
+const V_INVERSE_NORMAL_TRANSFORM = 'vInverseNormalTransform';
+const V_LINE_TEXTURE_COORD = 'vLineTextureCoord';
 
 const O_COLOR = "oColor";
 
@@ -45,23 +49,27 @@ const VERTEX_SHADER = `#version 300 es
   in vec4 ${A_VERTEX_POSITION};
   in vec4 ${A_VERTEX_COLOR};
   in mat4 ${A_VERTEX_NORMAL_TRANSFORM};
-  in vec2 ${A_VERTEX_TEXTURE_COORD};
+  in vec2 ${A_VERTEX_LINE_TEXTURE_COORD};
   uniform mat4 ${U_MODEL_VIEW_MATRIX};
   uniform mat4 ${U_MODEL_ROTATION_MATRIX};
   uniform mat4 ${U_PROJECTION_MATRIX};
   out vec4 ${V_COLOR};
-  out vec4 ${V_POSITION};
+  out vec4 ${V_VERTEX_POSITION};
+  out vec4 ${V_WORLD_POSITION};
   out vec4 ${V_NORMAL};
   out mat4 ${V_NORMAL_TRANSFORM};
-  out vec2 ${V_TEXTURE_COORD};
+  out mat4 ${V_INVERSE_NORMAL_TRANSFORM};
+  out vec2 ${V_LINE_TEXTURE_COORD};
 
   void main(void) {
-    gl_Position = ${U_PROJECTION_MATRIX} * ${U_MODEL_VIEW_MATRIX} * ${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_POSITION};
+    ${V_VERTEX_POSITION} = ${A_VERTEX_POSITION};
+    ${V_WORLD_POSITION} = ${U_PROJECTION_MATRIX} * ${U_MODEL_VIEW_MATRIX} * ${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_POSITION};
     ${V_COLOR} = ${A_VERTEX_COLOR};
-    ${V_POSITION} = ${A_VERTEX_POSITION};
-    ${V_TEXTURE_COORD} = ${A_VERTEX_TEXTURE_COORD};
+    ${V_LINE_TEXTURE_COORD} = ${A_VERTEX_LINE_TEXTURE_COORD};
     ${V_NORMAL} = ${A_VERTEX_NORMAL_TRANSFORM} * vec4(0., 0., 1., 1.);
     ${V_NORMAL_TRANSFORM} = ${A_VERTEX_NORMAL_TRANSFORM};
+    ${V_INVERSE_NORMAL_TRANSFORM} = inverse(${V_NORMAL_TRANSFORM});
+    gl_Position = ${V_WORLD_POSITION};
   }
 `;
 
@@ -69,76 +77,27 @@ const FRAGMENT_SHADER = `#version 300 es
   precision lowp float;
 
   in vec4 ${V_COLOR};
-  in vec4 ${V_POSITION};
+  in vec4 ${V_VERTEX_POSITION};
+  in vec4 ${V_WORLD_POSITION};
   in vec4 ${V_NORMAL};
   in mat4 ${V_NORMAL_TRANSFORM};
-  in vec2 ${V_TEXTURE_COORD};
+  in mat4 ${V_INVERSE_NORMAL_TRANSFORM};
+  in vec2 ${V_LINE_TEXTURE_COORD};
   uniform sampler2D ${U_LINE_TEXTURE};
   uniform sampler2D ${U_MATERIAL_TEXTURE};
   uniform vec4 ${U_MATERIAL_COLOR};
   uniform mat4 ${U_MODEL_ROTATION_MATRIX};
+  uniform vec3 ${U_CAMERA_POSITION};
   out vec4 ${O_COLOR};
 
-  mat3 xyz = mat3(
-    1, 0, 0, 
-    0, 1, 0, 
-    0, 0, 1 
-  );
-
-  mat3 zxy = mat3(
-    0, 0, 1,
-    1, 0, 0,
-    0, 1, 0
-  );
-
-  mat3 yzx = mat3(
-    0, 1, 0,
-    0, 0, 1,
-    1, 0, 0
-  );
-
-  mat2 ri = mat2(
-    1, 0,
-    0, 1
-  );
-
-  mat2 rn = mat2(
-   1, 1,
-   -1,1
-  );
-
-  mat2 rp = mat2(
-    1,-1,
-    1, 1
-  );
-
-  vec3 t(vec2 p, mat2 mp, mat2 mn, vec3 n) {
-    float c = dot(${V_NORMAL}.xyz, n);
-    float s = length(cross(${V_NORMAL}.xyz, n));
-    //mat2 m = mp * mat2(c, s, abs(s), abs(c));
-    //float v = .5 - c/2.;
-    //mat2 m = mp * (1. - v) + mn * v;
-    mat2 m = mp * mat2(c, -s, s, c);
-    //vec2 nxy = texture(${U_MATERIAL_TEXTURE}, c * (c > 0. ? mp : mn) * p).xy * 2. - 1.;
-    vec2 nxy = texture(${U_MATERIAL_TEXTURE}, m * p).xy * 2. - 1.;
-    vec4 nz = vec4(nxy * c, pow(1. - length(nxy), 2.) * abs(c), 1);
-    return (${V_NORMAL_TRANSFORM} * nz).xyz;
-  }
-
   void main(void) {
-    vec4 p = texture(${U_LINE_TEXTURE}, ${V_TEXTURE_COORD});
+    vec4 t = ${V_INVERSE_NORMAL_TRANSFORM} * ${V_VERTEX_POSITION};
+    vec4 p = texture(${U_LINE_TEXTURE}, ${V_LINE_TEXTURE_COORD});
+    vec3 d = normalize(${V_WORLD_POSITION}.xyz - ${U_CAMERA_POSITION});
     float l = max(p.r, max(p.g, max(p.b, 2. - 2. * p.a)));
-    //vec3 n = (p.xyz - .5) * 2.;
-    
-    // vec3 m = normalize(
-    //   t(${V_POSITION}.xy, ri, mat2(-1, 0, 0, 1), vec3(0, 0, 1))
-    //   + t(${V_POSITION}.zx, rp, mat2(1, -1, -1, -1), vec3(0, 1, 0))
-    //   + t(${V_POSITION}.yz, rn, mat2(-1, -1, -1, 1), vec3(1, 0, 0))
-    // );
-    //vec3 m = normalize(tt(${V_POSITION}, xyz) + tt(${V_POSITION}, zxy) + tt(${V_POSITION}, yzx));
-    vec2 nxy = texture(${U_MATERIAL_TEXTURE}, (inverse(${V_NORMAL_TRANSFORM}) * ${V_POSITION}).xy).xy * 2. - 1.;
-    vec4 nz = vec4(nxy, pow(1. - length(nxy), 2.), 1);
-    vec3 m = (${V_NORMAL_TRANSFORM} * nz).xyz;
+
+    vec4 px = texture(${U_MATERIAL_TEXTURE}, t.xy);
+    vec3 m = (${V_NORMAL_TRANSFORM} * vec4(px.xy, pow(1. - length(px.xy), 2.), 1)).xyz;
     ${O_COLOR} = vec4(
       mix(
         ${U_MATERIAL_COLOR}.rgb * (dot(m, normalize(vec3(1, 2, 0))) + 1.)/2.,
@@ -293,10 +252,10 @@ window.onload = () => {
   const shapes: readonly Shape[] = ([
     //[shape8, [shape6]],
     //[shape1, []],
-    //[shape5, [shape6]],
+    [shape5, [shape6]],
     //[shape7, [shape6]],
-    //[shape1, [shape2, shape3, shape4, shape6]],
-    [disc, columns],
+    [shape1, [shape2, shape3, shape4, shape6]],
+    //[disc, columns],
     //[disc, []],
     //[column, []],
     //[columns[0], []],
@@ -404,12 +363,12 @@ window.onload = () => {
     aPosition,
     aColor,
     aNormalTransform,
-    aTextureCoord,
+    aLineTextureCoord,
   ] = [
     A_VERTEX_POSITION,
     A_VERTEX_COLOR,
     A_VERTEX_NORMAL_TRANSFORM,
-    A_VERTEX_TEXTURE_COORD,
+    A_VERTEX_LINE_TEXTURE_COORD,
   ].map(
     attribute => gl.getAttribLocation(program, attribute)
   );
@@ -678,7 +637,7 @@ window.onload = () => {
 
   // fill it with black
   ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
-  const [points, colors, normalTransforms, textureCoords, indices] = faces.reduce<[
+  const [points, colors, normalTransforms, lineTextureCoords, indices] = faces.reduce<[
     // points
     [number, number, number][],
     // colors
@@ -690,7 +649,7 @@ window.onload = () => {
     // indices
     number[],
   ]>(
-    ([points, colors, normalTransforms, textureCoords, indices], face) => {
+    ([points, colors, normalTransforms, lineTextureCoords, indices], face) => {
       const {
         polygons,
         toWorldCoordinates,
@@ -841,7 +800,7 @@ window.onload = () => {
         if (closePath) {
           ctx.closePath();
         }
-        //ctx.stroke();
+        ctx.stroke();
       }
 
       // hashes to transformed points?
@@ -855,6 +814,10 @@ window.onload = () => {
         const x = ((px - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + originalTextureX)/geometryLineCanvas.width;
         const y = ((py - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + textureY)/geometryLineCanvas.height;
         return [x, y];
+      });
+      const newMaterialTextureCoords = uniquePoints.map<[number, number]>(worldPoint => {
+        const [px, py] = vec3.transformMat4(vec3.create(), worldPoint, fromWorldCoordinates);
+        return [px, py];
       });
 
       // const outsideColor: [number, number, number, number] = [.4, .4, .6, .3];
@@ -911,7 +874,7 @@ window.onload = () => {
         [...points, ...uniquePoints],
         [...colors, ...newColors],
         [...normalTransforms, ...newNormals],
-        [...textureCoords, ...newTextureCoords],
+        [...lineTextureCoords, ...newTextureCoords],
         [...indices, ...newIndices],
       ];
     },
@@ -936,7 +899,7 @@ window.onload = () => {
     [aPosition, points],
     [aColor, colors],
     [aNormalTransform, normalTransforms],
-    [aTextureCoord, textureCoords],
+    [aLineTextureCoord, lineTextureCoords],
   ] as const).forEach(([attribute, vectors]) => {
     var buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
