@@ -21,9 +21,8 @@ const MATERIAL_TEXTURE_DIMENSION = 256;
 
 const A_VERTEX_POSITION = "aVertexPosition";
 const A_VERTEX_COLOR = "aVertexColor";
-const A_VERTEX_NORMAL_TRANSFORM = 'aVertexNormalTransform';
-const A_VERTEX_LINE_TEXTURE_COORD = 'aVertexLineTextureCoord';
-const A_VERTEX_MATERIAL_TEXTURE_COORD = 'aVertexMaterialTextureCoord';
+const A_VERTEX_PLANE_TRANSFORM = 'aVertexPlaneTransform';
+const A_VERTEX_LINE_TEXTURE_OFFSET = 'aVertexLineTextureCoord';
 
 const U_MODEL_VIEW_MATRIX = "uModelViewMatrix";
 const U_MODEL_ROTATION_MATRIX = 'uModelRotationMatrix';
@@ -34,11 +33,11 @@ const U_MATERIAL_COLOR = 'uMaterialColor';
 const U_CAMERA_POSITION = 'uCameraPosition';
 
 const V_COLOR = 'vColor';
-const V_VERTEX_POSITION = 'vVertexPosition';
+const V_PLANE_POSITION = 'vVertexPosition';
 const V_WORLD_POSITION = 'vWorldPosition';
 const V_NORMAL = 'vNormal';
-const V_NORMAL_TRANSFORM = 'vNormalTransform';
-const V_INVERSE_NORMAL_TRANSFORM = 'vInverseNormalTransform';
+const V_PLANE_TRANSFORM = 'vPlaneTransform';
+const V_INVERSE_PLANE_WORLD_ROTATION_TRANSFORM = 'vInversePlaneWorldTransform';
 const V_LINE_TEXTURE_COORD = 'vLineTextureCoord';
 
 const O_COLOR = "oColor";
@@ -48,27 +47,28 @@ const VERTEX_SHADER = `#version 300 es
 
   in vec4 ${A_VERTEX_POSITION};
   in vec4 ${A_VERTEX_COLOR};
-  in mat4 ${A_VERTEX_NORMAL_TRANSFORM};
-  in vec2 ${A_VERTEX_LINE_TEXTURE_COORD};
+  in mat4 ${A_VERTEX_PLANE_TRANSFORM};
+  in vec2 ${A_VERTEX_LINE_TEXTURE_OFFSET};
   uniform mat4 ${U_MODEL_VIEW_MATRIX};
   uniform mat4 ${U_MODEL_ROTATION_MATRIX};
   uniform mat4 ${U_PROJECTION_MATRIX};
   out vec4 ${V_COLOR};
-  out vec4 ${V_VERTEX_POSITION};
-  out vec4 ${V_WORLD_POSITION};
   out vec4 ${V_NORMAL};
-  out mat4 ${V_NORMAL_TRANSFORM};
-  out mat4 ${V_INVERSE_NORMAL_TRANSFORM};
+  out vec4 ${V_WORLD_POSITION};
+  out vec4 ${V_PLANE_POSITION};
+  out mat4 ${V_PLANE_TRANSFORM};
+  out mat4 ${V_INVERSE_PLANE_WORLD_ROTATION_TRANSFORM};
   out vec2 ${V_LINE_TEXTURE_COORD};
 
   void main(void) {
-    ${V_VERTEX_POSITION} = ${A_VERTEX_POSITION};
     ${V_WORLD_POSITION} = ${U_PROJECTION_MATRIX} * ${U_MODEL_VIEW_MATRIX} * ${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_POSITION};
     ${V_COLOR} = ${A_VERTEX_COLOR};
-    ${V_LINE_TEXTURE_COORD} = ${A_VERTEX_LINE_TEXTURE_COORD};
-    ${V_NORMAL} = ${A_VERTEX_NORMAL_TRANSFORM} * vec4(0., 0., 1., 1.);
-    ${V_NORMAL_TRANSFORM} = ${A_VERTEX_NORMAL_TRANSFORM};
-    ${V_INVERSE_NORMAL_TRANSFORM} = inverse(${V_NORMAL_TRANSFORM});
+    ${V_LINE_TEXTURE_COORD} = ${A_VERTEX_LINE_TEXTURE_OFFSET};
+    ${V_NORMAL} = ${A_VERTEX_PLANE_TRANSFORM} * vec4(0., 0., 1., 1.);
+    ${V_PLANE_TRANSFORM} = ${A_VERTEX_PLANE_TRANSFORM};
+    ${V_PLANE_POSITION} = inverse(${A_VERTEX_PLANE_TRANSFORM}) * ${A_VERTEX_POSITION};
+    ${V_INVERSE_PLANE_WORLD_ROTATION_TRANSFORM} = inverse(${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_PLANE_TRANSFORM});
+
     gl_Position = ${V_WORLD_POSITION};
   }
 `;
@@ -77,11 +77,11 @@ const FRAGMENT_SHADER = `#version 300 es
   precision lowp float;
 
   in vec4 ${V_COLOR};
-  in vec4 ${V_VERTEX_POSITION};
+  in vec4 ${V_PLANE_POSITION};
   in vec4 ${V_WORLD_POSITION};
   in vec4 ${V_NORMAL};
-  in mat4 ${V_NORMAL_TRANSFORM};
-  in mat4 ${V_INVERSE_NORMAL_TRANSFORM};
+  in mat4 ${V_PLANE_TRANSFORM};
+  in mat4 ${V_INVERSE_PLANE_WORLD_ROTATION_TRANSFORM};
   in vec2 ${V_LINE_TEXTURE_COORD};
   uniform sampler2D ${U_LINE_TEXTURE};
   uniform sampler2D ${U_MATERIAL_TEXTURE};
@@ -91,16 +91,31 @@ const FRAGMENT_SHADER = `#version 300 es
   out vec4 ${O_COLOR};
 
   void main(void) {
-    vec4 t = ${V_INVERSE_NORMAL_TRANSFORM} * ${V_VERTEX_POSITION};
-    vec4 p = texture(${U_LINE_TEXTURE}, ${V_LINE_TEXTURE_COORD});
-    vec3 d = normalize(${V_WORLD_POSITION}.xyz - ${U_CAMERA_POSITION});
-    float l = max(p.r, max(p.g, max(p.b, 2. - 2. * p.a)));
+    vec4 d = ${V_INVERSE_PLANE_WORLD_ROTATION_TRANSFORM} * vec4(normalize(${V_WORLD_POSITION}.xyz - ${U_CAMERA_POSITION}), 1);
+    float c = dot(vec3(0, 0, 1), d.xyz);
 
-    vec4 px = texture(${U_MATERIAL_TEXTURE}, t.xy);
-    vec3 m = (${V_NORMAL_TRANSFORM} * vec4(px.xy, pow(1. - length(px.xy), 2.), 1)).xyz;
+    float v = 0.;
+    float l = 0.;
+    vec4 tm;
+    bool done = false;
+    int count = 0;
+    while (!done) {
+      vec4 p = ${V_PLANE_POSITION} - d * v;
+      vec4 tl = texture(
+        ${U_LINE_TEXTURE},
+        ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
+      );
+      tm = texture(${U_MATERIAL_TEXTURE}, p.xy);
+      l = max(l, tl.r);
+      done = tm.z < c * v || c < 0. || count > 99 || l > .9;
+      v += .01;
+      count++;
+    }
+    vec2 n = tm.xy * 2. - 1.;
+    vec3 m = (${V_PLANE_TRANSFORM} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
     ${O_COLOR} = vec4(
       mix(
-        ${U_MATERIAL_COLOR}.rgb * (dot(m, normalize(vec3(1, 2, 0))) + 1.)/2.,
+        ${U_MATERIAL_COLOR}.rgb * (dot(m, normalize(vec3(1, 2, 0))) + 1.)/2. * (1. - tm.z * 3.),
         //(m + 1.) / 2.,
         vec3(1.),
         max(${V_COLOR}.a, l)
@@ -363,18 +378,19 @@ window.onload = () => {
     aPosition,
     aColor,
     aNormalTransform,
-    aLineTextureCoord,
+    aLineTextureOffset,
   ] = [
     A_VERTEX_POSITION,
     A_VERTEX_COLOR,
-    A_VERTEX_NORMAL_TRANSFORM,
-    A_VERTEX_LINE_TEXTURE_COORD,
+    A_VERTEX_PLANE_TRANSFORM,
+    A_VERTEX_LINE_TEXTURE_OFFSET,
   ].map(
     attribute => gl.getAttribLocation(program, attribute)
   );
   const [
     uModelViewMatrix,
     uModelRotationMatrix,
+    uCameraPosition,
     uProjectionMatrix,
     uLineTexture,
     uMaterialTexture,
@@ -382,6 +398,7 @@ window.onload = () => {
   ] = [
     U_MODEL_VIEW_MATRIX,
     U_MODEL_ROTATION_MATRIX,
+    U_CAMERA_POSITION,
     U_PROJECTION_MATRIX,
     U_LINE_TEXTURE,
     U_MATERIAL_TEXTURE,
@@ -607,7 +624,7 @@ window.onload = () => {
     ctx.fillStyle = `rgba(127, 127, ${maxDepth}, 255)`;
     ctx.fillRect(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
     const imageData = ctx.getImageData(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
-    for (let i=0; i<999; i++) {
+    for (let i=0; i<9; i++) {
       const d = Math.random() * maxDepth + maxDepth;
       const r = d/2;
       const x = Math.random() * MATERIAL_TEXTURE_DIMENSION;
@@ -637,19 +654,19 @@ window.onload = () => {
 
   // fill it with black
   ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
-  const [points, colors, normalTransforms, lineTextureCoords, indices] = faces.reduce<[
+  const [points, colors, normalTransforms, lineTextureOffsets, indices] = faces.reduce<[
     // points
     [number, number, number][],
     // colors
     [number, number, number, number][],
     // mat4 normal transforms
     [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number][],
-    // line texture coordinations
+    // line texture offsets
     [number, number][],
     // indices
     number[],
   ]>(
-    ([points, colors, normalTransforms, lineTextureCoords, indices], face) => {
+    ([points, colors, normalTransforms, lineTextureOffsets, indices], face) => {
       const {
         polygons,
         toWorldCoordinates,
@@ -809,15 +826,13 @@ window.onload = () => {
       }, new Set<[number, number, number]>());
       const uniquePoints = [...hashesToPoints];
 
-      const newTextureCoords = uniquePoints.map<[number, number]>((worldPoint) => {
-        const [px, py] = vec3.transformMat4(vec3.create(), worldPoint, fromWorldCoordinates);
-        const x = ((px - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + originalTextureX)/geometryLineCanvas.width;
-        const y = ((py - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + textureY)/geometryLineCanvas.height;
+      const x = (-minX * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + originalTextureX)/LINE_TEXTURE_DIMENSION;
+      const y = (-minY * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + textureY)/LINE_TEXTURE_DIMENSION;
+      const newLineTextureOffsets = uniquePoints.map<[number, number]>((worldPoint) => {
+        // const [px, py] = vec3.transformMat4(vec3.create(), worldPoint, fromWorldCoordinates);
+        // const x = ((px - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + originalTextureX)/geometryLineCanvas.width;
+        // const y = ((py - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + textureY)/geometryLineCanvas.height;
         return [x, y];
-      });
-      const newMaterialTextureCoords = uniquePoints.map<[number, number]>(worldPoint => {
-        const [px, py] = vec3.transformMat4(vec3.create(), worldPoint, fromWorldCoordinates);
-        return [px, py];
       });
 
       // const outsideColor: [number, number, number, number] = [.4, .4, .6, .3];
@@ -830,7 +845,7 @@ window.onload = () => {
         //return inside ? insideColor : outsideColor;
         return color;
       });
-      const newNormals = uniquePoints.map(worldPoint => {
+      const newNormalTransforms = uniquePoints.map(worldPoint => {
         // const normals = pointNormals.get(worldPoint);
         // const normal = normals.reduce<vec3>((acc, normal) => {
         //   return vec3.add(
@@ -873,8 +888,8 @@ window.onload = () => {
       return [
         [...points, ...uniquePoints],
         [...colors, ...newColors],
-        [...normalTransforms, ...newNormals],
-        [...lineTextureCoords, ...newTextureCoords],
+        [...normalTransforms, ...newNormalTransforms],
+        [...lineTextureOffsets, ...newLineTextureOffsets],
         [...indices, ...newIndices],
       ];
     },
@@ -899,7 +914,7 @@ window.onload = () => {
     [aPosition, points],
     [aColor, colors],
     [aNormalTransform, normalTransforms],
-    [aLineTextureCoord, lineTextureCoords],
+    [aLineTextureOffset, lineTextureOffsets],
   ] as const).forEach(([attribute, vectors]) => {
     var buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -967,6 +982,7 @@ window.onload = () => {
   gl.uniform1i(uLineTexture, 0);
   gl.uniform1i(uMaterialTexture, 1);
   gl.uniform4f(uMaterialColor, .2, .2, .4, 0);
+  gl.uniform3f(uCameraPosition, 0, 0, 0);
   let then = 0;
   function animate(now: number) {
     const delta = now - then;
@@ -992,7 +1008,3 @@ window.onload = () => {
   }
   animate(0);
 };
-
-function normalToColor(normal: ReadonlyVec3) {
-  return `rgb(${[...normal].map(v => (v + 1) * 127).join()})`;
-}
