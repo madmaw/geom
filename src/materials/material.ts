@@ -1,0 +1,1 @@
+export type Material = (data: ImageData) => void;

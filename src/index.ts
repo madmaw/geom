@@ -6,6 +6,10 @@ import { loadShader } from "./util/webgl";
 import { EPSILON, NORMAL_Z } from "./geometry/constants";
 import { ConvexPolygon, Face } from "./geometry/face";
 import { Line, lineDistance } from "./geometry/line";
+import { Material } from "./materials/material";
+import { riverStonesFactory } from "./materials/river_stones";
+import { cratersFactory } from "./materials/craters";
+import { staticFactory } from "./materials/static";
 
 type MaybeInvertedFace = Face & {
   inverted: number,
@@ -17,11 +21,10 @@ const LINE_TEXTURE_BUFFER = 10;
 const BASE_LINE_WIDTH = 1;
 const BASE_EDGE_SMOOTHING = 20;
 const BORDER_EXPAND = 0.02;
-const MATERIAL_TEXTURE_DIMENSION = 256;
+const MATERIAL_TEXTURE_DIMENSION = 1024;
 
 const A_VERTEX_WORLD_POSITION = "aVertexWorldPosition";
 const A_VERTEX_PLANE_POSITION = 'aVertexPlanePosition';
-const A_VERTEX_COLOR = "aVertexColor";
 const A_VERTEX_PLANE_ROTATION_MATRIX = 'aVertexPlaneRotation';
 const A_VERTEX_LINE_TEXTURE_OFFSET = 'aVertexLineTextureCoord';
 
@@ -30,10 +33,10 @@ const U_MODEL_ROTATION_MATRIX = 'uModelRotation';
 const U_PROJECTION_MATRIX = "uProjection";
 const U_LINE_TEXTURE = 'uLine';
 const U_MATERIAL_TEXTURE = 'uMaterial';
-const U_MATERIAL_COLOR = 'uMaterialColor';
+const U_MATERIAL_COLOR_1 = 'uMaterialColor1';
+const U_MATERIAL_COLOR_2 = 'uMaterialColor2';
 const U_CAMERA_POSITION = 'uCameraPosition';
 
-const V_COLOR = 'vColor';
 const V_PLANE_POSITION = 'vPlanePosition';
 const V_WORLD_POSITION = 'vWorldPosition';
 const V_NORMAL = 'vNormal';
@@ -47,14 +50,12 @@ const VERTEX_SHADER = `#version 300 es
   precision lowp float;
 
   in vec4 ${A_VERTEX_WORLD_POSITION};
-  in vec2 ${A_VERTEX_PLANE_POSITION};
-  in vec4 ${A_VERTEX_COLOR};
+  in vec4 ${A_VERTEX_PLANE_POSITION};
   in mat4 ${A_VERTEX_PLANE_ROTATION_MATRIX};
   in vec2 ${A_VERTEX_LINE_TEXTURE_OFFSET};
   uniform mat4 ${U_MODEL_VIEW_MATRIX};
   uniform mat4 ${U_MODEL_ROTATION_MATRIX};
   uniform mat4 ${U_PROJECTION_MATRIX};
-  out vec4 ${V_COLOR};
   out vec4 ${V_NORMAL};
   out vec4 ${V_WORLD_POSITION};
   out vec4 ${V_PLANE_POSITION};
@@ -64,8 +65,7 @@ const VERTEX_SHADER = `#version 300 es
 
   void main(void) {
     ${V_WORLD_POSITION} = ${U_MODEL_VIEW_MATRIX} * ${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_WORLD_POSITION};
-    ${V_PLANE_POSITION} = vec4(${A_VERTEX_PLANE_POSITION}, 0, 1);
-    ${V_COLOR} = ${A_VERTEX_COLOR};
+    ${V_PLANE_POSITION} = ${A_VERTEX_PLANE_POSITION};
     ${V_LINE_TEXTURE_COORD} = ${A_VERTEX_LINE_TEXTURE_OFFSET};
     ${V_NORMAL} = ${A_VERTEX_PLANE_ROTATION_MATRIX} * vec4(0., 0., 1., 1.);
     ${V_PLANE_ROTATION_MATRIX} = ${A_VERTEX_PLANE_ROTATION_MATRIX};
@@ -81,7 +81,6 @@ const STEPS = 1/STEP | 0;
 const FRAGMENT_SHADER = `#version 300 es
   precision lowp float;
 
-  in vec4 ${V_COLOR};
   in vec4 ${V_PLANE_POSITION};
   in vec4 ${V_WORLD_POSITION};
   in vec4 ${V_NORMAL};
@@ -90,7 +89,8 @@ const FRAGMENT_SHADER = `#version 300 es
   in vec2 ${V_LINE_TEXTURE_COORD};
   uniform sampler2D ${U_LINE_TEXTURE};
   uniform sampler2D ${U_MATERIAL_TEXTURE};
-  uniform vec4 ${U_MATERIAL_COLOR};
+  uniform vec4 ${U_MATERIAL_COLOR_1};
+  uniform vec4 ${U_MATERIAL_COLOR_2};
   uniform mat4 ${U_MODEL_ROTATION_MATRIX};
   uniform vec3 ${U_CAMERA_POSITION};
   out vec4 ${O_COLOR};
@@ -110,7 +110,7 @@ const FRAGMENT_SHADER = `#version 300 es
     do {
       depth += ${STEP};
       p = ${V_PLANE_POSITION} - d * depth / c;
-      vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy);
+      vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy / 9. + ${V_PLANE_POSITION}.zw);
       float surfaceDepth = tm1.z - .5;
       if (surfaceDepth < depth) {
         float d0 = depth - ${STEP};
@@ -123,7 +123,6 @@ const FRAGMENT_SHADER = `#version 300 es
         //float si = -${STEP};
         depth -= ${STEP} + si;
         p = ${V_PLANE_POSITION} - d * (d0 - si) / c;
-        // tm = texture(${U_MATERIAL_TEXTURE}, p.xy);
         done = true;
       } else {
         tm = tm1;
@@ -134,26 +133,21 @@ const FRAGMENT_SHADER = `#version 300 es
       );
       l = depth > ${-STEP} ? max(l, tl.r) : l;
       count++;
-    } while (!done && c > 0. && count < ${STEPS} && l < .9);
-    tm = texture(${U_MATERIAL_TEXTURE}, p.xy);
+    } while (!done && c > 0. && count < ${STEPS} && l < .1);
+    tm = texture(${U_MATERIAL_TEXTURE}, p.xy / 9. + ${V_PLANE_POSITION}.zw);
     vec2 n = tm.xy * 2. - 1.;
     vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
+    vec4 color = mix(${U_MATERIAL_COLOR_2}, ${U_MATERIAL_COLOR_1}, abs(tm.a * 2. - 1.));
     ${O_COLOR} = vec4(
       mix(
-        //(tm.w > ${-STEP} && tm.w < .0 ? ${U_MATERIAL_COLOR}.rgb * (dot(m, normalize(vec3(1, 1, 0))) + 1.)/2. : vec3(tm.w * 100., abs(tm.w) * 100., 0)),
-        ${U_MATERIAL_COLOR}.rgb * max(0., (dot(m, normalize(vec3(3, 2, 1))) + 1.)/2.),
+        color.rgb * max(0., (dot(m, normalize(vec3(3, 2, 1))) + 1.)/2.),
         //vec3((p.xyz + 1.)/2.),
-        //texture(${U_MATERIAL_TEXTURE}, p.xy).xyz,
-        //vec3((p.xyz - ${V_PLANE_POSITION}.xyz) * 3. + .5),
-        //vec3(-depth * 2., float(count) / 100., depth > -.02 ? 1. : 0.),
         //tm.xyz,
-        //(d.xyz + 1.) / 2. * (dot(m, normalize(vec3(1, 1, 0))) + 1.)/2.,
-        //(p.xyz + 1.)/2.,
         //vec3(depth + .5),
         vec3(1.),
-        max(${V_COLOR}.a, l)
+        l
       ),
-      ${V_COLOR}.a
+      1
     );
   }
 `;
@@ -300,10 +294,10 @@ window.onload = () => {
   const shapes: readonly Shape[] = ([
     //[shape8, [shape6]],
     //[shape1, []],
-    [shape5, [shape6]],
+    //[shape5, [shape6]],
     //[shape7, [shape6]],
-    [shape1, [shape2, shape3, shape4, shape6]],
-    //[disc, columns],
+    //[shape1, [shape2, shape3, shape4, shape6]],
+    [disc, columns],
     //[disc, []],
     //[column, []],
     //[columns[0], []],
@@ -331,7 +325,7 @@ window.onload = () => {
     return worldPoint;
   }
 
-  let faces: MaybeInvertedFace[] = [shapes, negativeShapes].map((shapes, i) => {
+  let faces: MaybeInvertedFace[] = [shapes, /*negativeShapes*/].map((shapes, i) => {
     const faces = decompose(shapes);
     // reverse the face
     return faces.map<MaybeInvertedFace>(({
@@ -410,13 +404,11 @@ window.onload = () => {
   const [
     aWorldPosition,
     aPlanePosition,
-    aColor,
     aNormalTransform,
     aLineTextureOffset,
   ] = [
     A_VERTEX_WORLD_POSITION,
     A_VERTEX_PLANE_POSITION,
-    A_VERTEX_COLOR,
     A_VERTEX_PLANE_ROTATION_MATRIX,
     A_VERTEX_LINE_TEXTURE_OFFSET,
   ].map(
@@ -429,7 +421,8 @@ window.onload = () => {
     uProjectionMatrix,
     uLineTexture,
     uMaterialTexture,
-    uMaterialColor,
+    uMaterialColor1,
+    uMaterialColor2,
   ] = [
     U_MODEL_VIEW_MATRIX,
     U_MODEL_ROTATION_MATRIX,
@@ -437,13 +430,14 @@ window.onload = () => {
     U_PROJECTION_MATRIX,
     U_LINE_TEXTURE,
     U_MATERIAL_TEXTURE,
-    U_MATERIAL_COLOR,
+    U_MATERIAL_COLOR_1,
+    U_MATERIAL_COLOR_2,
   ].map(
     uniform => gl.getUniformLocation(program, uniform)
   );
 
   const pointAdjacency = faces.reduce((acc, face) => {
-    const { polygons, toWorldCoordinates, rotateToWorldCoordinates } = face;
+    const { polygons, toWorldCoordinates } = face;
 
     return polygons.reduce((acc, polygon) => {
       return polygon.reduce((acc, currentPoint, i) => {
@@ -648,53 +642,31 @@ window.onload = () => {
   let textureMaxHeight = LINE_TEXTURE_SCALE;
   //ctx.lineCap = 'round';
 
-  const materials = 1;
   // add in some textures
-  const materialCanvases = new Array(materials).fill(0).map((_, i) => {
-    const materialCanvas = document.getElementById('canvasTexture'+i) as HTMLCanvasElement;
+  const materials: Material[] = [
+    staticFactory(() => 0, 12, 50, 9999),
+    riverStonesFactory(20, 9999),
+    staticFactory(cratersFactory(15, 30, 99), 4, 40, 9999),
+  ];
+  const materialCanvases = materials.map((material, i) => {
+    const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
     materialCanvas.width = MATERIAL_TEXTURE_DIMENSION;
     materialCanvas.height = MATERIAL_TEXTURE_DIMENSION;
     const ctx = materialCanvas.getContext('2d');
-    const maxDepth = (i+1) * 15;
-    ctx.fillStyle = `rgba(127, 127, 127, 255)`;
+    ctx.fillStyle = `rgba(127, 127, 127, 127)`;
     ctx.fillRect(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
     const imageData = ctx.getImageData(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
-    for (let i=0; i<999; i++) {
-      const d = Math.random() * maxDepth + maxDepth;
-      const r = d/2;
-      const x = Math.random() * MATERIAL_TEXTURE_DIMENSION;
-      const y = Math.random() * MATERIAL_TEXTURE_DIMENSION;
-      for (let px = x | 0; px < (x + d + 1 | 0); px++) {
-        for (let py = y | 0; py < (y + d + 1 | 0); py++) {
-          let index = ((py % MATERIAL_TEXTURE_DIMENSION) * MATERIAL_TEXTURE_DIMENSION
-              + (px % MATERIAL_TEXTURE_DIMENSION)) * 4;
-          const dx = px - x - r;
-          const dy = py - y - r;
-          const dzsq = r * r - dx * dx - dy * dy;
-          const existingDepth = imageData.data[index + 2];
-          if (dzsq > 0) {
-            const dz = Math.sqrt(dzsq)/2;
-            const [nx, ny] = vec3.normalize(vec3.create(), [dx, dy, dz]);
-            const depth = 127 - dz;
-            if (depth < existingDepth) {
-              imageData.data.set([(nx + 1) * 127 | 0, (ny + 1) * 127 | 0, depth | 0, 255], index);  
-            }
-          }
-        }
-      }
-    }
+    material(imageData);
     ctx.putImageData(imageData, 0, 0);
     return materialCanvas;
   });
 
   // fill it with black
   ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
-  const [worldPoints, planePoints, colors, normalTransforms, lineTextureOffsets, indices] = faces.reduce<[
+  const [worldPoints, planePoints, normalTransforms, lineTextureOffsets, indices] = faces.reduce<[
     // world position points
     [number, number, number][],
     // plane position points
-    [number, number][],
-    // colors
     [number, number, number, number][],
     // mat4 normal transforms
     [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number][],
@@ -703,7 +675,7 @@ window.onload = () => {
     // indices
     number[],
   ]>(
-    ([worldPoints, planePoints, colors, normalTransforms, lineTextureOffsets, indices], face) => {
+    ([worldPoints, planePoints, normalTransforms, lineTextureOffsets, indices], face) => {
       const {
         polygons,
         toWorldCoordinates,
@@ -872,16 +844,6 @@ window.onload = () => {
         return [x, y];
       });
 
-      // const outsideColor: [number, number, number, number] = [.4, .4, .6, .3];
-      // const insideColor: [number, number, number, number] = [.1, .1, .1, .6];
-      const color: [number, number, number, number] = inverted
-        ? [1, 1, 1, 1]
-        : [.4, .4, .6, .1];
-      const newColors = uniquePoints.map(worldPoint => {
-        //const inside = shapes.some(([addition]) => convexShapeContainPoint(addition, worldPoint));
-        //return inside ? insideColor : outsideColor;
-        return color;
-      });
       const newNormalTransforms = uniquePoints.map(worldPoint => {
         // const normals = pointNormals.get(worldPoint);
         // const normal = normals.reduce<vec3>((acc, normal) => {
@@ -908,9 +870,11 @@ window.onload = () => {
 
         return [...rotateToWorldCoordinates] as any;
       });
-      const newPlanePoints = uniquePoints.map<[number, number]>(worldPoint => {
+      const dx = Math.random();
+      const dy = Math.random();
+      const newPlanePoints = uniquePoints.map<[number, number, number, number]>(worldPoint => {
         const [x, y] = vec3.transformMat4(vec3.create(), worldPoint, fromWorldCoordinates);
-        return [x, y];
+        return [x, y, dx, dy];
       });
 
       const newIndices = polygons.reduce<number[]>((indices, polygon, i) => {
@@ -929,13 +893,12 @@ window.onload = () => {
       return [
         [...worldPoints, ...uniquePoints],
         [...planePoints, ...newPlanePoints],
-        [...colors, ...newColors],
         [...normalTransforms, ...newNormalTransforms],
         [...lineTextureOffsets, ...newLineTextureOffsets],
         [...indices, ...newIndices],
       ];
     },
-    [[], [], [], [], [], []],
+    [[], [], [], [], []],
   );
 
   [geometryLineCanvas, ...materialCanvases].forEach((image, i) => {
@@ -955,7 +918,6 @@ window.onload = () => {
   ([
     [aWorldPosition, worldPoints],
     [aPlanePosition, planePoints],
-    [aColor, colors],
     [aNormalTransform, normalTransforms],
     [aLineTextureOffset, lineTextureOffsets],
   ] as const).forEach(([attribute, vectors]) => {
@@ -990,6 +952,7 @@ window.onload = () => {
 
   const modelRotationMatrix = mat4.identity(mat4.create());
   let previousPosition: ReadonlyVec3 | undefined;
+  let material = 1;
 
   window.onmousedown = (e: MouseEvent) => previousPosition = [e.clientX, -e.clientY, 0];
   window.onmouseup = () => previousPosition = undefined;
@@ -1018,13 +981,23 @@ window.onload = () => {
     const positionMatrix = mat4.translate(mat4.create(), mat4.identity(mat4.create()), [0, 0, -e.deltaY/100]);
     mat4.multiply(modelPositionMatrix, positionMatrix, modelPositionMatrix);
   };
+  window.onkeydown = (e: KeyboardEvent) => {
+    switch (e.key) {
+      case 'Enter':
+        material = (material%materials.length) + 1;
+        gl.uniform1i(uMaterialTexture, material);
+        console.log(material);
+        break;
+    } 
+  };
 
   const fpsDiv = document.getElementById('fps');
   const lastFrameTimes: number[] = [];
   gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
   gl.uniform1i(uLineTexture, 0);
   gl.uniform1i(uMaterialTexture, 1);
-  gl.uniform4f(uMaterialColor, .2, .2, .4, 0);
+  gl.uniform4f(uMaterialColor1, .3, .3, .5, 1);
+  gl.uniform4f(uMaterialColor2, .2, .2, .4, 1);
   gl.uniform3f(uCameraPosition, 0, 0, 0);
   let then = 0;
   function animate(now: number) {

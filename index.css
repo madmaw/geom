@@ -4,24 +4,30 @@ body {
   overflow: hidden;
 }
 
-.overlay {
+.overlay, .content {
   width: 100%;
   height: 100%;
   position: absolute;
 }
 
-#canvasLines, #canvas3d, #canvasTexture0 {
-  width: 100%;
-  height: 33%;
-  position: absolute;
+#canvasLines, #canvas3d {
+  width: 100vmin;
+  height: 100vmin;
 }
 
-#canvasLines {
-  top: 33%;
+.content {
+  display: flex;
+  flex-direction: column;
 }
 
-#canvasTexture0 {
-  top: 67%;
+.materials {
+  display: flex;
+  flex-direction: row;
+}
+
+.material {
+  width: 20vmin;
+  height: 20vmin;
 }
 
 #fps {
