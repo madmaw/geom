@@ -17,7 +17,7 @@ type MaybeInvertedFace = Face & {
 };
 
 //const LINE_TEXTURE_DIMENSION = 4096;
-const LINE_TEXTURE_DIMENSION = 512;
+const LINE_TEXTURE_DIMENSION = 1024;
 const LINE_TEXTURE_SCALE = 32;
 const LINE_TEXTURE_BUFFER = 10;
 const BASE_LINE_WIDTH = 1;
@@ -108,7 +108,7 @@ const FRAGMENT_SHADER = `#version 300 es
     vec4 tm;
     int count = 0;
     vec4 p;
-    while (c > 0. && count < ${STEPS} && l < .1) {
+    while (c > 0. && count < ${STEPS}) {
       depth += ${STEP};
       p = ${V_PLANE_POSITION} - d * depth / c;
       vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy / 9. + ${V_PLANE_POSITION}.zw);
@@ -124,17 +124,31 @@ const FRAGMENT_SHADER = `#version 300 es
         //float si = -${STEP};
         depth -= ${STEP} + si;
         p = ${V_PLANE_POSITION} - d * (d0 - si) / c;
-        count = ${STEPS};
         vec4 tl = texture(
           ${U_LINE_TEXTURE},
           ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
         );
-        l = max(tl.r, tl.g);
+        if (tl.g < .1) {
+          count = ${STEPS};
+        }
       } else {
         tm = tm1;
       }
+      vec4 tl = texture(
+        ${U_LINE_TEXTURE},
+        ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
+      );
+      l = tl.r;
+      if (tl.g > 0. && depth > 0.) {
+        // discard;
+        // return;
+        l = 1.;
+        count = ${STEPS};        
+      }
+  
       count++;
     };
+
     tm = texture(${U_MATERIAL_TEXTURE}, p.xy / 9. + ${V_PLANE_POSITION}.zw);
     vec2 n = tm.xy * 2. - 1.;
     vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
@@ -672,7 +686,6 @@ window.onload = () => {
   ctx.fillStyle = '#0F0';
   ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
   ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, 100, 100);
   const [worldPoints, planePoints, normalTransforms, lineTextureOffsets, indices] = faces.reduce<[
     // world position points
     [number, number, number][],
