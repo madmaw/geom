@@ -10,13 +10,15 @@ import { Material } from "./materials/material";
 import { riverStonesFactory } from "./materials/river_stones";
 import { cratersFactory } from "./materials/craters";
 import { staticFactory } from "./materials/static";
+import { sphere } from "./geometry/sphere";
 
 type MaybeInvertedFace = Face & {
   inverted: number,
 };
 
-const LINE_TEXTURE_DIMENSION = 4096;
-const LINE_TEXTURE_SCALE = 64;
+//const LINE_TEXTURE_DIMENSION = 4096;
+const LINE_TEXTURE_DIMENSION = 512;
+const LINE_TEXTURE_SCALE = 32;
 const LINE_TEXTURE_BUFFER = 10;
 const BASE_LINE_WIDTH = 1;
 const BASE_EDGE_SMOOTHING = 20;
@@ -104,10 +106,9 @@ const FRAGMENT_SHADER = `#version 300 es
     float depth = -.5;
     float l = 0.;
     vec4 tm;
-    bool done = false;
     int count = 0;
     vec4 p;
-    do {
+    while (c > 0. && count < ${STEPS} && l < .1) {
       depth += ${STEP};
       p = ${V_PLANE_POSITION} - d * depth / c;
       vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy / 9. + ${V_PLANE_POSITION}.zw);
@@ -123,17 +124,17 @@ const FRAGMENT_SHADER = `#version 300 es
         //float si = -${STEP};
         depth -= ${STEP} + si;
         p = ${V_PLANE_POSITION} - d * (d0 - si) / c;
-        done = true;
+        count = ${STEPS};
+        vec4 tl = texture(
+          ${U_LINE_TEXTURE},
+          ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
+        );
+        l = max(tl.r, tl.g);
       } else {
         tm = tm1;
       }
-      vec4 tl = texture(
-        ${U_LINE_TEXTURE},
-        ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
-      );
-      l = depth > ${-STEP} ? max(l, tl.r) : l;
       count++;
-    } while (!done && c > 0. && count < ${STEPS} && l < .1);
+    };
     tm = texture(${U_MATERIAL_TEXTURE}, p.xy / 9. + ${V_PLANE_POSITION}.zw);
     vec2 n = tm.xy * 2. - 1.;
     vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
@@ -144,7 +145,7 @@ const FRAGMENT_SHADER = `#version 300 es
         //vec3((p.xyz + 1.)/2.),
         //tm.xyz,
         //vec3(depth + .5),
-        vec3(1.),
+        vec3(1),
         l
       ),
       1
@@ -231,13 +232,16 @@ window.onload = () => {
   
   // cube
   const shape8: ConvexShape = [
-    toPlane(0, 0, 1, 1),
-    toPlane(0, 0, -1, 1),
-    toPlane(1, 0, 0, 1),
-    toPlane(-1, 0, 0, 1),
-    toPlane(0, 1, 0, 1),
-    toPlane(0, -1, 0, 1),
+    toPlane(0, 0, 1, 2),
+    toPlane(0, 0, -1, 2),
+    toPlane(1, 0, 0, 2),
+    toPlane(-1, 0, 0, 2),
+    toPlane(0, 1, 0, 2),
+    toPlane(0, -1, 0, 2),
   ];
+
+  const sphere1 = sphere(shape8, 2.5, 2);
+  const sphere2 = convexShapeExpand(sphere1, .1)
   
   const segmentsz = 6;
   const segmentsy = 3;
@@ -267,10 +271,10 @@ window.onload = () => {
     const az = Math.PI * 2 * i / arrz.length;
     const cosz = Math.cos(az);
     const sinz = Math.sin(az);
-    return toPlane(cosz, sinz, 0, 1);
+    return toPlane(cosz, sinz, 0, .4);
   }).concat([
-    toPlane(0, 0, -1, 1),
-    toPlane(0, 0, 1, 1),
+    toPlane(0, 0, -1, 3),
+    toPlane(0, 0, 1, 3),
   ]);
 
   const columns: ConvexShape[] = new Array(segmentsy).fill(0).map((_, i, arry) => {
@@ -293,11 +297,13 @@ window.onload = () => {
   
   const shapes: readonly Shape[] = ([
     //[shape8, [shape6]],
-    //[shape1, []],
+    [shape1, []],
     //[shape5, [shape6]],
     //[shape7, [shape6]],
     //[shape1, [shape2, shape3, shape4, shape6]],
-    [disc, columns],
+    //[disc, columns],
+    //[sphere1, []],
+    //[sphere2, [sphere1, column]],
     //[disc, []],
     //[column, []],
     //[columns[0], []],
@@ -354,11 +360,6 @@ window.onload = () => {
       });
     })
   )));
-
-  const geometryLineCanvas = document.getElementById("canvasLines") as HTMLCanvasElement;
-  geometryLineCanvas.width = LINE_TEXTURE_DIMENSION;
-  geometryLineCanvas.height = LINE_TEXTURE_DIMENSION;
-  const ctx = geometryLineCanvas.getContext('2d');
 
   const canvas3d = document.getElementById("canvas3d") as HTMLCanvasElement;
   canvas3d.width = canvas3d.clientWidth;
@@ -646,6 +647,7 @@ window.onload = () => {
   const materials: Material[] = [
     staticFactory(() => 0, 12, 50, 9999),
     riverStonesFactory(20, 9999),
+    riverStonesFactory(40, 999),
     staticFactory(cratersFactory(15, 30, 99), 4, 40, 9999),
   ];
   const materialCanvases = materials.map((material, i) => {
@@ -661,8 +663,16 @@ window.onload = () => {
     return materialCanvas;
   });
 
-  // fill it with black
+  const geometryLineCanvas = document.getElementById("canvasLines") as HTMLCanvasElement;
+  geometryLineCanvas.width = LINE_TEXTURE_DIMENSION;
+  geometryLineCanvas.height = LINE_TEXTURE_DIMENSION;
+  const ctx = geometryLineCanvas.getContext('2d');
+
+  // fill it with green
+  ctx.fillStyle = '#0F0';
   ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, 100, 100);
   const [worldPoints, planePoints, normalTransforms, lineTextureOffsets, indices] = faces.reduce<[
     // world position points
     [number, number, number][],
@@ -720,6 +730,7 @@ window.onload = () => {
       )] as [number, number, number];
 
       polygons.forEach(polygon => {
+        ctx.beginPath();
         polygon.forEach((currentPoint, i) => {
           const currentWorldPoint = getWorldPoint(currentPoint, toWorldCoordinates);
           const nextPoint = polygon[(i + 1)%polygon.length];
@@ -728,37 +739,16 @@ window.onload = () => {
           const adjacentNormal = vec3.transformMat4(
             vec3.create(), NORMAL_Z, adjacentFace.rotateToWorldCoordinates,
           );
+          const [x, y] = currentPoint;
+          const px = originalTextureX + (x - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
+          const py = textureY + (y - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
+          ctx.lineTo(px, py);
           const sinAngle = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
-          if (sinAngle > EPSILON) {
-            //const lineWidth = sinAngle * BASE_EDGE_SMOOTHING;
-            // const p = toTextureCoordinate(currentPoint);
-            // const n = toTextureCoordinate(nextPoint);
-            // const [px, py] = p;
-            // const [nx, ny] = n;
-            // const a = Math.atan2(ny - py, nx - px);
-            // const ap = a + Math.PI/2;
-            // const cos = Math.cos(ap) * lineWidth/2;
-            // const sin = Math.sin(ap) * lineWidth/2;
-            // const gradient = ctx.createLinearGradient(
-            //   px + cos, 
-            //   py + sin,
-            //   px - cos,
-            //   py - sin,
-            // );
-            // gradient.addColorStop(1, normalToColor(adjacentNormal));
-            // gradient.addColorStop(0, normalToColor(normal));
-            // ctx.strokeStyle = gradient;
-
-            // ctx.lineWidth = lineWidth;
-            // ctx.beginPath();
-            // [p, n].forEach(point => {
-            //   ctx.lineTo(...point);
-            // });  
-            //ctx.stroke();
-      
+          if (sinAngle > EPSILON) {      
             lineConnections.set(currentWorldPoint, nextWorldPoint);
           }
         });
+        ctx.fill();
       });
 
       // const imageData = ctx.createImageData(width, height);
@@ -793,7 +783,7 @@ window.onload = () => {
       //ctx.lineCap = 'round';
       // ctx.fillStyle = 'rgba(0, 0, 0, .5)';
       // ctx.globalCompositeOperation = 'destination-out';
-      ctx.strokeStyle = '#F00';
+      ctx.strokeStyle = '#FF0';
       const lineConnectionValues = new Set(lineConnections.values());
       while (lineConnections.size) {
         const lineConnectionKeys = [...lineConnections.keys()];
@@ -986,7 +976,12 @@ window.onload = () => {
       case 'Enter':
         material = (material%materials.length) + 1;
         gl.uniform1i(uMaterialTexture, material);
-        console.log(material);
+        break;
+      case 'a':
+        gl.uniform4f(uMaterialColor1, Math.random(), Math.random(), Math.random(), 1);
+        break;
+      case 's':
+        gl.uniform4f(uMaterialColor2, Math.random(), Math.random(), Math.random(), 1);
         break;
     } 
   };

@@ -25,3 +25,4 @@ export function convexShapeExpand(shape: ConvexShape, amount: number): ConvexSha
     return [normal, vec3.add(vec3.create(), position, vec3.scale(vec3.create(), normal, amount))]
   });
 }
+
