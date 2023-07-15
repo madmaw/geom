@@ -19,7 +19,7 @@ type MaybeInvertedFace = Face & {
 //const LINE_TEXTURE_DIMENSION = 4096;
 const LINE_TEXTURE_DIMENSION = 1024;
 const LINE_TEXTURE_SCALE = 32;
-const LINE_TEXTURE_BUFFER = 10;
+const LINE_TEXTURE_BUFFER = 20;
 const BASE_LINE_WIDTH = 1;
 const BASE_EDGE_SMOOTHING = 20;
 const BORDER_EXPAND = 0.02;
@@ -78,7 +78,8 @@ const VERTEX_SHADER = `#version 300 es
 `;
 
 const STEP = .01;
-const STEPS = 1/STEP | 0;
+const NUM_STEPS = 1/STEP | 0;
+const MATERIAL_SCALE = 9;
 
 const FRAGMENT_SHADER = `#version 300 es
   precision lowp float;
@@ -102,16 +103,15 @@ const FRAGMENT_SHADER = `#version 300 es
     float c = dot(vec3(0, 0, 1), d.xyz);
     float s = length(cross(vec3(0, 0, 1), d.xyz));
 
-    //float depth = c < 0. ? 0. : -.5;
     float depth = -.5;
-    float l = 0.;
     vec4 tm;
     int count = 0;
     vec4 p;
-    while (c > 0. && count < ${STEPS}) {
+    vec4 tl;
+    while (c > 0. && count < ${NUM_STEPS}) {
       depth += ${STEP};
       p = ${V_PLANE_POSITION} - d * depth / c;
-      vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy / 9. + ${V_PLANE_POSITION}.zw);
+      vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy / ${MATERIAL_SCALE}. + ${V_PLANE_POSITION}.zw);
       float surfaceDepth = tm1.z - .5;
       if (surfaceDepth < depth) {
         float d0 = depth - ${STEP};
@@ -124,32 +124,21 @@ const FRAGMENT_SHADER = `#version 300 es
         //float si = -${STEP};
         depth -= ${STEP} + si;
         p = ${V_PLANE_POSITION} - d * (d0 - si) / c;
-        vec4 tl = texture(
-          ${U_LINE_TEXTURE},
-          ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
-        );
-        if (tl.g < .1) {
-          count = ${STEPS};
-        }
+        count = ${NUM_STEPS};
       } else {
         tm = tm1;
       }
-      vec4 tl = texture(
+      tl = texture(
         ${U_LINE_TEXTURE},
         ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
       );
-      l = tl.r;
-      if (tl.g > 0. && depth > 0.) {
-        // discard;
-        // return;
-        l = 1.;
-        count = ${STEPS};        
-      }
-  
       count++;
-    };
+      if (tl.g < .5 && (depth > ${STEP} || count > ${NUM_STEPS})) {
+        count = ${NUM_STEPS};
+      }
+    }
 
-    tm = texture(${U_MATERIAL_TEXTURE}, p.xy / 9. + ${V_PLANE_POSITION}.zw);
+    tm = texture(${U_MATERIAL_TEXTURE}, p.xy / ${MATERIAL_SCALE}. + ${V_PLANE_POSITION}.zw);
     vec2 n = tm.xy * 2. - 1.;
     vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
     vec4 color = mix(${U_MATERIAL_COLOR_2}, ${U_MATERIAL_COLOR_1}, abs(tm.a * 2. - 1.));
@@ -159,8 +148,10 @@ const FRAGMENT_SHADER = `#version 300 es
         //vec3((p.xyz + 1.)/2.),
         //tm.xyz,
         //vec3(depth + .5),
-        vec3(1),
-        l
+        ${U_MATERIAL_COLOR_1}.xyz,
+        //tl.xyz,
+        //0.
+        max(tl.x, 1. - tl.y)
       ),
       1
     );
@@ -254,7 +245,7 @@ window.onload = () => {
     toPlane(0, -1, 0, 2),
   ];
 
-  const sphere1 = sphere(shape8, 2.5, 2);
+  const sphere1 = sphere(shape8, 2, 1);
   const sphere2 = convexShapeExpand(sphere1, .1)
   
   const segmentsz = 6;
@@ -311,10 +302,10 @@ window.onload = () => {
   
   const shapes: readonly Shape[] = ([
     //[shape8, [shape6]],
-    [shape1, []],
-    //[shape5, [shape6]],
+    //[shape1, []],
+    [shape5, [shape6]],
     //[shape7, [shape6]],
-    //[shape1, [shape2, shape3, shape4, shape6]],
+    [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, columns],
     //[sphere1, []],
     //[sphere2, [sphere1, column]],
@@ -345,7 +336,7 @@ window.onload = () => {
     return worldPoint;
   }
 
-  let faces: MaybeInvertedFace[] = [shapes, /*negativeShapes*/].map((shapes, i) => {
+  let faces: MaybeInvertedFace[] = [shapes, negativeShapes].map((shapes, i) => {
     const faces = decompose(shapes);
     // reverse the face
     return faces.map<MaybeInvertedFace>(({
@@ -659,6 +650,7 @@ window.onload = () => {
 
   // add in some textures
   const materials: Material[] = [
+    () => 0,
     staticFactory(() => 0, 12, 50, 9999),
     riverStonesFactory(20, 9999),
     riverStonesFactory(40, 999),
@@ -683,9 +675,10 @@ window.onload = () => {
   const ctx = geometryLineCanvas.getContext('2d');
 
   // fill it with green
-  ctx.fillStyle = '#0F0';
   ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
-  ctx.fillStyle = '#000';
+  ctx.fillStyle = '#0F0';
+  ctx.lineWidth = BASE_LINE_WIDTH;
+
   const [worldPoints, planePoints, normalTransforms, lineTextureOffsets, indices] = faces.reduce<[
     // world position points
     [number, number, number][],
@@ -761,7 +754,11 @@ window.onload = () => {
             lineConnections.set(currentWorldPoint, nextWorldPoint);
           }
         });
+        ctx.closePath();
         ctx.fill();
+        ctx.strokeStyle = '#0FF';
+        // ctx.lineWidth = BASE_LINE_WIDTH;
+        ctx.stroke();
       });
 
       // const imageData = ctx.createImageData(width, height);
@@ -792,11 +789,10 @@ window.onload = () => {
       // }
       // ctx.putImageData(imageData, originalTextureX, textureY);
 
-      ctx.lineWidth = BASE_LINE_WIDTH;
       //ctx.lineCap = 'round';
       // ctx.fillStyle = 'rgba(0, 0, 0, .5)';
       // ctx.globalCompositeOperation = 'destination-out';
-      ctx.strokeStyle = '#FF0';
+      ctx.strokeStyle = '#F00';
       const lineConnectionValues = new Set(lineConnections.values());
       while (lineConnections.size) {
         const lineConnectionKeys = [...lineConnections.keys()];
