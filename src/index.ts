@@ -18,9 +18,9 @@ type MaybeInvertedFace = Face & {
 
 //const LINE_TEXTURE_DIMENSION = 4096;
 const LINE_TEXTURE_DIMENSION = 1024;
-const LINE_TEXTURE_SCALE = 32;
+const LINE_TEXTURE_SCALE = 64;
 const LINE_TEXTURE_BUFFER = 20;
-const BASE_LINE_WIDTH = 1;
+const BASE_LINE_WIDTH = 3;
 const BASE_EDGE_SMOOTHING = 20;
 const BORDER_EXPAND = 0.02;
 const MATERIAL_TEXTURE_DIMENSION = 1024;
@@ -34,6 +34,7 @@ const U_MODEL_VIEW_MATRIX = "uModelView";
 const U_MODEL_ROTATION_MATRIX = 'uModelRotation';
 const U_PROJECTION_MATRIX = "uProjection";
 const U_LINE_TEXTURE = 'uLine';
+const U_LINE_COLOR = 'uLineColor';
 const U_MATERIAL_TEXTURE = 'uMaterial';
 const U_MATERIAL_COLOR_1 = 'uMaterialColor1';
 const U_MATERIAL_COLOR_2 = 'uMaterialColor2';
@@ -91,6 +92,7 @@ const FRAGMENT_SHADER = `#version 300 es
   in mat4 ${V_INVERSE_PLANE_WORLD_ROTATION_MATRIX};
   in vec2 ${V_LINE_TEXTURE_COORD};
   uniform sampler2D ${U_LINE_TEXTURE};
+  uniform vec4 ${U_LINE_COLOR};
   uniform sampler2D ${U_MATERIAL_TEXTURE};
   uniform vec4 ${U_MATERIAL_COLOR_1};
   uniform vec4 ${U_MATERIAL_COLOR_2};
@@ -133,8 +135,9 @@ const FRAGMENT_SHADER = `#version 300 es
         ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
       );
       count++;
-      if (tl.g < .5 && (depth > ${STEP} || count > ${NUM_STEPS})) {
+      if (tl.g < .5 && (depth > 0. || count > ${NUM_STEPS})) {
         count = ${NUM_STEPS};
+        //depth = 0.;
       }
     }
 
@@ -144,14 +147,15 @@ const FRAGMENT_SHADER = `#version 300 es
     vec4 color = mix(${U_MATERIAL_COLOR_2}, ${U_MATERIAL_COLOR_1}, abs(tm.a * 2. - 1.));
     ${O_COLOR} = vec4(
       mix(
-        color.rgb * max(0., (dot(m, normalize(vec3(3, 2, 1))) + 1.)/2.),
+        color.rgb * max(0., (dot(m, normalize(vec3(3, 1, 2)))+.5)*.7),
         //vec3((p.xyz + 1.)/2.),
         //tm.xyz,
         //vec3(depth + .5),
-        ${U_MATERIAL_COLOR_1}.xyz,
+        //mix(${U_LINE_COLOR}.rgb, ${U_MATERIAL_COLOR_1}.rgb, min(1., abs(depth) * 9.)),
+        ${U_LINE_COLOR}.rgb,
         //tl.xyz,
         //0.
-        max(tl.x, 1. - tl.y)
+        max(tl.r, 1. - tl.g)
       ),
       1
     );
@@ -245,7 +249,7 @@ window.onload = () => {
     toPlane(0, -1, 0, 2),
   ];
 
-  const sphere1 = sphere(shape8, 2, 1);
+  const sphere1 = sphere(shape8, 2.6, 2);
   const sphere2 = convexShapeExpand(sphere1, .1)
   
   const segmentsz = 6;
@@ -303,11 +307,11 @@ window.onload = () => {
   const shapes: readonly Shape[] = ([
     //[shape8, [shape6]],
     //[shape1, []],
-    [shape5, [shape6]],
+    //[shape5, [shape6]],
     //[shape7, [shape6]],
-    [shape1, [shape2, shape3, shape4, shape6]],
+    //[shape1, [shape2, shape3, shape4, shape6]],
     //[disc, columns],
-    //[sphere1, []],
+    [sphere1, []],
     //[sphere2, [sphere1, column]],
     //[disc, []],
     //[column, []],
@@ -426,6 +430,7 @@ window.onload = () => {
     uCameraPosition,
     uProjectionMatrix,
     uLineTexture,
+    uLineColor,
     uMaterialTexture,
     uMaterialColor1,
     uMaterialColor2,
@@ -435,6 +440,7 @@ window.onload = () => {
     U_CAMERA_POSITION,
     U_PROJECTION_MATRIX,
     U_LINE_TEXTURE,
+    U_LINE_COLOR,
     U_MATERIAL_TEXTURE,
     U_MATERIAL_COLOR_1,
     U_MATERIAL_COLOR_2,
@@ -992,6 +998,9 @@ window.onload = () => {
       case 's':
         gl.uniform4f(uMaterialColor2, Math.random(), Math.random(), Math.random(), 1);
         break;
+      case 'd':
+        gl.uniform4f(uLineColor, Math.random(), Math.random(), Math.random(), 1);
+        break;        
     } 
   };
 
@@ -999,6 +1008,8 @@ window.onload = () => {
   const lastFrameTimes: number[] = [];
   gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
   gl.uniform1i(uLineTexture, 0);
+  //gl.uniform4f(uLineColor, .8, .9, 1, 1);
+  gl.uniform4f(uLineColor, 0, 0, 0, 1);
   gl.uniform1i(uMaterialTexture, 1);
   gl.uniform4f(uMaterialColor1, .3, .3, .5, 1);
   gl.uniform4f(uMaterialColor2, .2, .2, .4, 1);
