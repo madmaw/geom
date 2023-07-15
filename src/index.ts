@@ -11,15 +11,15 @@ import { riverStonesFactory } from "./materials/river_stones";
 import { cratersFactory } from "./materials/craters";
 import { staticFactory } from "./materials/static";
 import { sphere } from "./geometry/sphere";
+import { createFlatMaterialFactory } from "./materials/flat";
 
 type MaybeInvertedFace = Face & {
   inverted: number,
 };
 
-//const LINE_TEXTURE_DIMENSION = 4096;
-const LINE_TEXTURE_DIMENSION = 1024;
+const LINE_TEXTURE_DIMENSION = 4096;
 const LINE_TEXTURE_SCALE = 64;
-const LINE_TEXTURE_BUFFER = 20;
+const LINE_TEXTURE_BUFFER = 32;
 const BASE_LINE_WIDTH = 3;
 const BASE_EDGE_SMOOTHING = 20;
 const BORDER_EXPAND = 0.02;
@@ -137,7 +137,6 @@ const FRAGMENT_SHADER = `#version 300 es
       count++;
       if (tl.g < .5 && (depth > 0. || count > ${NUM_STEPS})) {
         count = ${NUM_STEPS};
-        //depth = 0.;
       }
     }
 
@@ -655,23 +654,19 @@ window.onload = () => {
   //ctx.lineCap = 'round';
 
   // add in some textures
-  const materials: Material[] = [
-    () => 0,
-    staticFactory(() => 0, 12, 50, 9999),
-    riverStonesFactory(20, 9999),
-    riverStonesFactory(40, 999),
-    staticFactory(cratersFactory(15, 30, 99), 4, 40, 9999),
+  const materials: Material[][] = [
+    [createFlatMaterialFactory(127, 127)],
+    [createFlatMaterialFactory(127, 127), staticFactory(20, 50, 9999)],
+    [createFlatMaterialFactory(120, 127), riverStonesFactory(9, 29, 19, 999), staticFactory(6, 40, 9999)],
+    [createFlatMaterialFactory(127, 127), riverStonesFactory(9, 19, 99, 299)],
+    [createFlatMaterialFactory(127, 127), staticFactory(9, 99, 9999), cratersFactory(15, 50, 99)],
   ];
-  const materialCanvases = materials.map((material, i) => {
+  const materialCanvases = materials.map((materials, i) => {
     const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
     materialCanvas.width = MATERIAL_TEXTURE_DIMENSION;
     materialCanvas.height = MATERIAL_TEXTURE_DIMENSION;
     const ctx = materialCanvas.getContext('2d');
-    ctx.fillStyle = `rgba(127, 127, 127, 127)`;
-    ctx.fillRect(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
-    const imageData = ctx.getImageData(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
-    material(imageData);
-    ctx.putImageData(imageData, 0, 0);
+    materials.forEach(material => material(ctx));
     return materialCanvas;
   });
 

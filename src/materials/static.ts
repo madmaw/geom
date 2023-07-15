@@ -1,13 +1,11 @@
-import { Material } from "./material";
+import { Material, imageDataMaterial } from "./material";
 
 export function staticFactory(
-  proxied: Material,
   dimension: number,
   range: number,
   quantity: number,
 ): Material {
-  return function(imageData: ImageData) {
-    proxied(imageData);
+  return imageDataMaterial(function(imageData: ImageData) {
     for (let i=0; i<quantity; i++) {
       const x = imageData.width * Math.random() | 0;
       const y = imageData.height * Math.random() | 0;
@@ -21,5 +19,5 @@ export function staticFactory(
         }
       }
     }
-  };
+  });
 }

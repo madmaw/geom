@@ -1,10 +1,10 @@
 import { vec3 } from "gl-matrix";
-import { Material } from "./material";
+import { Material, imageDataMaterial } from "./material";
 
 export function cratersFactory(minDepth: number, maxDepth: number, quantity: number): Material {
-  return function (imageData: ImageData) {
+  return imageDataMaterial(function (imageData: ImageData) {
     for (let i=0; i<quantity; i++) {
-      const r = minDepth + (maxDepth - minDepth) * Math.random();
+      const r = minDepth + (maxDepth - minDepth) * Math.pow(Math.random(), 2);
       const d = r * 2;
       const x = Math.random() * imageData.width;
       const y = Math.random() * imageData.height;
@@ -33,5 +33,5 @@ export function cratersFactory(minDepth: number, maxDepth: number, quantity: num
         }
       }
     }
-  };
+  });
 }
