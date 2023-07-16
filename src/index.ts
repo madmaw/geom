@@ -80,7 +80,7 @@ const VERTEX_SHADER = `#version 300 es
 
 const STEP = .01;
 const NUM_STEPS = 1/STEP | 0;
-const MATERIAL_SCALE = 4;
+const MATERIAL_SCALE = 3;
 
 const FRAGMENT_SHADER = `#version 300 es
   precision lowp float;
@@ -135,7 +135,7 @@ const FRAGMENT_SHADER = `#version 300 es
         ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
       );
       count++;
-      if (tl.g < .5 && (depth > 0. || count > ${NUM_STEPS})) {
+      if (tl.g < .5 && depth > 0.) {
         count = ${NUM_STEPS};
       }
     }
@@ -149,7 +149,9 @@ const FRAGMENT_SHADER = `#version 300 es
         color.rgb * max(0., (dot(m, normalize(vec3(3, 1, 2)))+.5)*.7),
         //vec3((p.xyz + 1.)/2.),
         //tm.xyz,
+        //(p.xyz + 1.)/2.,
         //vec3(depth + .5),
+        //vec3(count/${NUM_STEPS}),
         //mix(${U_LINE_COLOR}.rgb, ${U_MATERIAL_COLOR_1}.rgb, min(1., abs(depth) * 9.)),
         ${U_LINE_COLOR}.rgb,
         //tl.xyz,
@@ -306,9 +308,9 @@ window.onload = () => {
   const shapes: readonly Shape[] = ([
     //[shape8, [shape6]],
     //[shape1, []],
-    //[shape5, [shape6]],
     //[shape7, [shape6]],
-    //[shape1, [shape2, shape3, shape4, shape6]],
+    // [shape5, [shape6]],
+    // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, columns],
     [sphere1, []],
     //[sphere2, [sphere1, column]],
@@ -656,10 +658,10 @@ window.onload = () => {
   // add in some textures
   const materials: Material[][] = [
     [createFlatMaterialFactory(127, 127)],
-    [createFlatMaterialFactory(127, 127), staticFactory(20, 20, 99, 9999)],
-    [createFlatMaterialFactory(120, 127), riverStonesFactory(9, 29, 19, 999), staticFactory(6, 0, 40, 9999)],
-    [createFlatMaterialFactory(127, 127), riverStonesFactory(9, 19, 99, 299)],
-    [createFlatMaterialFactory(127, 127), staticFactory(9, 9, 40, 9999), cratersFactory(15, 50, 99)],
+    [createFlatMaterialFactory(127, 127), staticFactory(40, 40, 99, 9999)],
+    [createFlatMaterialFactory(120, 127), riverStonesFactory(9, 49, 29, 599), staticFactory(6, 0, 40, 9999)],
+    [createFlatMaterialFactory(127, 127), riverStonesFactory(9, 29, 99, 99)],
+    [createFlatMaterialFactory(127, 127), cratersFactory(30, 99, 9), staticFactory(9, 9, 40, 9999)],
   ];
   const materialCanvases = materials.map((materials, i) => {
     const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
