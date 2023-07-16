@@ -8,8 +8,8 @@ export function cratersFactory(minDepth: number, maxDepth: number, quantity: num
       const d = r * 2;
       const x = Math.random() * imageData.width;
       const y = Math.random() * imageData.height;
-      for (let px = x | 0; px < (x + d + 1 | 0); px++) {
-        for (let py = y | 0; py < (y + d + 1 | 0); py++) {
+      for (let px = x | 0; px < x + d; px++) {
+        for (let py = y | 0; py < y + d; py++) {
           const dx = px - x - r;
           const dy = py - y - r;
           const dzsq = r * r - dx * dx - dy * dy;

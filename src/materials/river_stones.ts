@@ -18,8 +18,8 @@ export function riverStonesFactory(
       const y = Math.random() * imageData.height;
       //const z = imageData.data[(y * imageData.width + x) * 4 + 2 | 0];
       const c = Math.random() * 127;
-      for (let px = x | 0; px < (x + d + 1 | 0); px++) {
-        for (let py = y | 0; py < (y + d + 1 | 0); py++) {
+      for (let px = x | 0; px < x + d; px++) {
+        for (let py = y | 0; py < y + d; py++) {
           const dx = px - x - r;
           const dy = py - y - r;
           const dzsq = r * r - dx * dx - dy * dy;

@@ -80,7 +80,7 @@ const VERTEX_SHADER = `#version 300 es
 
 const STEP = .01;
 const NUM_STEPS = 1/STEP | 0;
-const MATERIAL_SCALE = 9;
+const MATERIAL_SCALE = 4;
 
 const FRAGMENT_SHADER = `#version 300 es
   precision lowp float;
@@ -656,10 +656,10 @@ window.onload = () => {
   // add in some textures
   const materials: Material[][] = [
     [createFlatMaterialFactory(127, 127)],
-    [createFlatMaterialFactory(127, 127), staticFactory(20, 50, 9999)],
-    [createFlatMaterialFactory(120, 127), riverStonesFactory(9, 29, 19, 999), staticFactory(6, 40, 9999)],
+    [createFlatMaterialFactory(127, 127), staticFactory(20, 20, 99, 9999)],
+    [createFlatMaterialFactory(120, 127), riverStonesFactory(9, 29, 19, 999), staticFactory(6, 0, 40, 9999)],
     [createFlatMaterialFactory(127, 127), riverStonesFactory(9, 19, 99, 299)],
-    [createFlatMaterialFactory(127, 127), staticFactory(9, 99, 9999), cratersFactory(15, 50, 99)],
+    [createFlatMaterialFactory(127, 127), staticFactory(9, 9, 40, 9999), cratersFactory(15, 50, 99)],
   ];
   const materialCanvases = materials.map((materials, i) => {
     const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
