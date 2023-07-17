@@ -1,10 +1,9 @@
-import { ReadonlyVec3, vec3 } from "gl-matrix";
+import { vec3 } from "gl-matrix";
 import { decompose } from "./decompose";
 import { ConvexShape } from "./shape";
-import { EPSILON } from "./constants";
 import { toPlane } from "./plane";
 
-export function sphere(
+export function round(
   // base shape to round
   shape: ConvexShape,
   // the radius to round to, or, if negative, to subtract from the base shape
@@ -41,7 +40,8 @@ export function sphere(
       );
     });
     const roundedShape = [...shape, ...newPlanes];
-    return sphere(roundedShape, r > 0 ? r : r, Math.abs(steps) - 1);
+    // TODO could we just call round multiple times externally?
+    return round(roundedShape, r > 0 ? r : r, Math.abs(steps) - 1);
   }
   return shape;
 }

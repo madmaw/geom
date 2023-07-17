@@ -4,13 +4,12 @@ import { decompose } from "./geometry/decompose";
 import { ReadonlyMat4, ReadonlyVec3, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 import { EPSILON, NORMAL_Z } from "./geometry/constants";
-import { ConvexPolygon, Face } from "./geometry/face";
-import { Line, lineDistance } from "./geometry/line";
+import { Face } from "./geometry/face";
 import { Material } from "./materials/material";
 import { riverStonesFactory } from "./materials/river_stones";
 import { cratersFactory } from "./materials/craters";
 import { staticFactory } from "./materials/static";
-import { sphere } from "./geometry/sphere";
+import { round } from "./geometry/round";
 import { createFlatMaterialFactory } from "./materials/flat";
 import { DEPTH_RANGE } from "./constants";
 
@@ -19,10 +18,9 @@ type MaybeInvertedFace = Face & {
 };
 
 const LINE_TEXTURE_DIMENSION = 4096;
-const LINE_TEXTURE_SCALE = 64;
-const LINE_TEXTURE_BUFFER = 32;
-const BASE_LINE_WIDTH = 3;
-const BASE_EDGE_SMOOTHING = 20;
+const LINE_TEXTURE_SCALE = 32;
+const LINE_TEXTURE_BUFFER = 16;
+const BASE_LINE_WIDTH = 1;
 const BORDER_EXPAND = 0.02;
 const MATERIAL_TEXTURE_DIMENSION = 1024;
 
@@ -259,14 +257,41 @@ window.onload = () => {
     toPlane(0, -1, 0, 2),
   ];
 
-  const sphere1 = sphere(shape8, 2.6, -1);
-  const sphere2 = convexShapeExpand(sphere1, .1)
+  const roundedCube1 = round(shape8, 2.6, -1);
+  const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
   const segmentsz = 6;
   const segmentsy = 3;
   const ry = .9;
-  const rz = 2;
+  const rz = 4;
   const hole = rz;
+
+  const sphere: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
+    const az = Math.PI * 2 * i / arrz.length;
+    const cosz = Math.cos(az);
+    const sinz = Math.sin(az);
+    return new Array(segmentsy).fill(0).map<Plane>((_, j, arry) => {
+      const ay = Math.PI * (j + 1) / (arry.length + 1) - Math.PI/2;
+      const cosy = Math.cos(ay);
+      const siny = Math.sin(ay);
+      return toPlane(cosz * cosy, sinz * cosy, siny, rz);
+    });
+  }).flat(1).concat([
+    toPlane(0, 0, -1, rz),
+    toPlane(0, 0, 1, rz),
+  ]);
+
+  const column: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
+    const az = Math.PI * 2 * i / arrz.length;
+    const cosz = Math.cos(az);
+    const sinz = Math.sin(az);
+    return toPlane(cosz, sinz, 0, 1);
+  }).concat([
+    toPlane(0, 0, -1, 5),
+    toPlane(0, 0, 1, 5),
+  ]);
+
+
 
   const disc: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
     const az = Math.PI * 2 * i / arrz.length;
@@ -284,16 +309,6 @@ window.onload = () => {
   }).flat(1).concat([
     toPlane(0, 0, -1, ry),
     toPlane(0, 0, 1, ry),
-  ]);
-
-  const column: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
-    const az = Math.PI * 2 * i / arrz.length;
-    const cosz = Math.cos(az);
-    const sinz = Math.sin(az);
-    return toPlane(cosz, sinz, 0, .4);
-  }).concat([
-    toPlane(0, 0, -1, 3),
-    toPlane(0, 0, 1, 3),
   ]);
 
   const columns: ConvexShape[] = new Array(segmentsy).fill(0).map((_, i, arry) => {
@@ -321,7 +336,8 @@ window.onload = () => {
     // [shape5, [shape6]],
     // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, columns],
-    [sphere1, []],
+    //[roundedCube1, []],
+    [sphere, [column]],
     //[sphere2, [sphere1, column]],
     //[disc, []],
     //[column, []],
@@ -689,7 +705,7 @@ window.onload = () => {
   // fill it with green
   ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
   ctx.fillStyle = '#0F0';
-  ctx.lineWidth = BASE_LINE_WIDTH;
+  ctx.lineWidth = 2;
 
   const [worldPoints, planePoints, normalTransforms, lineTextureOffsets, indices] = faces.reduce<[
     // world position points
@@ -805,6 +821,7 @@ window.onload = () => {
       // ctx.fillStyle = 'rgba(0, 0, 0, .5)';
       // ctx.globalCompositeOperation = 'destination-out';
       ctx.strokeStyle = '#F00';
+      ctx.lineWidth = BASE_LINE_WIDTH;
       const lineConnectionValues = new Set(lineConnections.values());
       while (lineConnections.size) {
         const lineConnectionKeys = [...lineConnections.keys()];
