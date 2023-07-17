@@ -4,7 +4,7 @@ import { decompose } from "./geometry/decompose";
 import { ReadonlyMat4, ReadonlyVec3, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 import { EPSILON, NORMAL_Z } from "./geometry/constants";
-import { Face } from "./geometry/face";
+import { Face, convexPolygonContainsPoint } from "./geometry/face";
 import { Material } from "./materials/material";
 import { riverStonesFactory } from "./materials/river_stones";
 import { cratersFactory } from "./materials/craters";
@@ -79,7 +79,7 @@ const VERTEX_SHADER = `#version 300 es
 
 const STEP = .02;
 const NUM_STEPS = DEPTH_RANGE/STEP | 0;
-const MATERIAL_SCALE = 3;
+const MATERIAL_SCALE = 4;
 
 const FRAGMENT_SHADER = `#version 300 es
   precision lowp float;
@@ -153,7 +153,7 @@ const FRAGMENT_SHADER = `#version 300 es
     vec4 color = mix(${U_MATERIAL_COLOR_2}, ${U_MATERIAL_COLOR_1}, abs(tm.a * 2. - 1.));
     ${O_COLOR} = vec4(
       mix(
-        color.rgb * pow(max(0., (dot(m, normalize(vec3(3, 1, 2)))+1.)/2.), color.a * 2.),
+        color.rgb * pow(max(0., (dot(m, normalize(vec3(1, 2, 3)))+1.)/2.), color.a * 2.),
         //vec3((p.xyz + 1.)/2.),
         //tm.xyz,
         //(p.xyz + 1.)/2.,
@@ -248,7 +248,7 @@ window.onload = () => {
   ];
   
   // cube
-  const shape8: ConvexShape = [
+  const cube: ConvexShape = [
     toPlane(0, 0, 1, 2),
     toPlane(0, 0, -1, 2),
     toPlane(1, 0, 0, 2),
@@ -257,11 +257,11 @@ window.onload = () => {
     toPlane(0, -1, 0, 2),
   ];
 
-  const roundedCube1 = round(shape8, 2.6, -1);
+  const roundedCube1 = round(round(cube, -1, false), -.7, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
-  const segmentsz = 6;
-  const segmentsy = 3;
+  const segmentsz = 12;
+  const segmentsy = 6;
   const ry = .9;
   const rz = 4;
   const hole = rz;
@@ -330,15 +330,15 @@ window.onload = () => {
   }).filter(v => v != null);
   
   const shapes: readonly Shape[] = ([
-    //[shape8, [shape6]],
+    //[cube, []],
     //[shape1, []],
     //[shape7, [shape6]],
-    // [shape5, [shape6]],
-    // [shape1, [shape2, shape3, shape4, shape6]],
+    [shape5, [shape6]],
+    [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, columns],
     //[roundedCube1, []],
-    [sphere, [column]],
-    //[sphere2, [sphere1, column]],
+    //[sphere, []],
+    //[sphere, [column]],
     //[disc, []],
     //[column, []],
     //[columns[0], []],
@@ -682,11 +682,11 @@ window.onload = () => {
 
   // add in some textures
   const materials: Material[][] = [
-    [createFlatMaterialFactory(128, 127)],
-    [createFlatMaterialFactory(128, 127), staticFactory(9, 9, 99, 9999)],
-    [createFlatMaterialFactory(150, 127), riverStonesFactory(9, 49, 29, 599), staticFactory(6, 0, 40, 9999)],
-    [createFlatMaterialFactory(128, 127), riverStonesFactory(9, 39, 99, 99), staticFactory(6, 0, 99, 999)],
-    [createFlatMaterialFactory(128, 127), cratersFactory(30, 99, 9), staticFactory(9, 99, 40, 999)],
+    [createFlatMaterialFactory(128, 1)],
+    [createFlatMaterialFactory(128, .7), staticFactory(9, 9, 99, 9999)],
+    [createFlatMaterialFactory(128, .5), riverStonesFactory(9, 49, 39, 299), staticFactory(6, 0, 40, 9999)],
+    [createFlatMaterialFactory(128, .5), riverStonesFactory(9, 39, 99, 99), staticFactory(6, 0, 99, 999)],
+    [createFlatMaterialFactory(128, 1), cratersFactory(30, 99, 9), staticFactory(9, 99, 40, 999)],
   ];
   const materialCanvases = materials.map((materials, i) => {
     const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
@@ -982,6 +982,71 @@ window.onload = () => {
   let previousPosition: ReadonlyVec3 | undefined;
   let material = 1;
 
+  window.onclick = (e: MouseEvent) => {
+    // camera position is 0, 0, 0
+    const inverseProjectionMatrix = mat4.invert(mat4.create(), projectionMatrix);
+    const world = vec3.transformMat4(
+      vec3.create(),
+      [e.clientX/canvas3d.width * 2 - 1, e.clientY/canvas3d.height * -2 + 1, 0],
+      inverseProjectionMatrix,
+    );
+    console.log('world', ...world);
+    const line = vec3.normalize(
+      vec3.create(),
+      world,
+    );
+    console.log('line', ...line);
+    const modelMatrix = mat4.multiply(
+      mat4.create(),
+      modelPositionMatrix,
+      modelRotationMatrix,
+    );
+    const inverseModelMatrix = mat4.invert(
+      mat4.create(),
+      modelMatrix,
+    );
+    const inverseModelRotationMatrix = mat4.invert(
+      mat4.create(),
+      modelRotationMatrix,
+    );
+    const relativeCameraPosition = vec3.transformMat4(vec3.create(), [0, 0, 0], inverseModelMatrix);
+    const relativeCameraDirection = vec3.transformMat4(vec3.create(), line, inverseModelRotationMatrix);
+    const intersections = faces.map(({
+      polygons,
+      toWorldCoordinates,
+      rotateToWorldCoordinates,
+      inverted,
+    }) => {
+      if (!inverted) {
+        const fromWorldCoordinates = mat4.invert(mat4.create(), toWorldCoordinates);
+        const rotateFromWorldCoordinates = mat4.invert(mat4.create(), rotateToWorldCoordinates);  
+        const surfaceCameraPosition = vec3.transformMat4(vec3.create(), relativeCameraPosition, fromWorldCoordinates);
+        const surfaceCameraDirection = vec3.transformMat4(vec3.create(), relativeCameraDirection, rotateFromWorldCoordinates);
+        const dz = surfaceCameraDirection[2];
+        const z = surfaceCameraPosition[2];
+        // ensure the surface is pointing at us
+        if (dz < -EPSILON) {
+          const surfaceIntersectionPoint = vec3.scaleAndAdd(
+            vec3.create(),
+            surfaceCameraPosition,
+            surfaceCameraDirection,
+            -z / dz,
+          );
+          const contained = polygons.some(polygon => {
+            return convexPolygonContainsPoint(polygon, surfaceIntersectionPoint);
+          });  
+          if (contained) {
+            const worldPoint = vec3.transformMat4(vec3.create(), surfaceIntersectionPoint, toWorldCoordinates);
+            return worldPoint;
+          }
+        }
+      }
+      return [];
+    }).flat(1).map(worldPoint => {
+      return [...vec3.transformMat4(vec3.create(), worldPoint, modelMatrix)];
+    });
+    console.log('intersections', ...intersections);
+  };
   window.onmousedown = (e: MouseEvent) => previousPosition = [e.clientX, -e.clientY, 0];
   window.onmouseup = () => previousPosition = undefined;
   window.onmousemove = (e: MouseEvent) => {

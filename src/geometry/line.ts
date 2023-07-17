@@ -12,7 +12,7 @@ export function lineIntersection(
   const dy = py2 - py1;
   const a = Math.atan2(ny2, nx2);
   const [rnx1, rny1] = vec2.rotate(vec2.create(), n1, [0, 0], -a);
-  // not parallel
+  // parallel
   if (Math.abs(rny1) < EPSILON) {
     return;
   }
