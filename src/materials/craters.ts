@@ -1,8 +1,10 @@
 import { vec3 } from "gl-matrix";
 import { Material, imageDataMaterial } from "./material";
+import { DEPTH_RANGE } from "../constants";
 
 export function cratersFactory(minDepth: number, maxDepth: number, quantity: number): Material {
   return imageDataMaterial(function (imageData: ImageData) {
+    const z = imageData.data[2];
     for (let i=0; i<quantity; i++) {
       const r = minDepth + (maxDepth - minDepth) * Math.pow(Math.random(), 2);
       const d = r * 2;
@@ -18,7 +20,7 @@ export function cratersFactory(minDepth: number, maxDepth: number, quantity: num
               + (px % imageData.width)) * 4;
             const existingDepth = imageData.data[index + 2];
             const depth = Math.sqrt(dzsq);
-            const depthValue = 127 + depth/2;
+            const depthValue = z + depth / (DEPTH_RANGE * 2);
             if (depthValue > existingDepth) {
               const [nx, ny] = vec3.normalize(vec3.create(), [-dx, -dy, -depth]);
 

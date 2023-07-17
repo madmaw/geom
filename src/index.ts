@@ -12,6 +12,7 @@ import { cratersFactory } from "./materials/craters";
 import { staticFactory } from "./materials/static";
 import { sphere } from "./geometry/sphere";
 import { createFlatMaterialFactory } from "./materials/flat";
+import { DEPTH_RANGE } from "./constants";
 
 type MaybeInvertedFace = Face & {
   inverted: number,
@@ -70,7 +71,7 @@ const VERTEX_SHADER = `#version 300 es
     ${V_WORLD_POSITION} = ${U_MODEL_VIEW_MATRIX} * ${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_WORLD_POSITION};
     ${V_PLANE_POSITION} = ${A_VERTEX_PLANE_POSITION};
     ${V_LINE_TEXTURE_COORD} = ${A_VERTEX_LINE_TEXTURE_OFFSET};
-    ${V_NORMAL} = ${A_VERTEX_PLANE_ROTATION_MATRIX} * vec4(0., 0., 1., 1.);
+    ${V_NORMAL} = ${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_PLANE_ROTATION_MATRIX} * vec4(0., 0., 1., 1.);
     ${V_PLANE_ROTATION_MATRIX} = ${A_VERTEX_PLANE_ROTATION_MATRIX};
     ${V_INVERSE_PLANE_WORLD_ROTATION_MATRIX} = inverse(${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_PLANE_ROTATION_MATRIX});
 
@@ -78,8 +79,8 @@ const VERTEX_SHADER = `#version 300 es
   }
 `;
 
-const STEP = .01;
-const NUM_STEPS = 1/STEP | 0;
+const STEP = .02;
+const NUM_STEPS = DEPTH_RANGE/STEP | 0;
 const MATERIAL_SCALE = 3;
 
 const FRAGMENT_SHADER = `#version 300 es
@@ -104,8 +105,12 @@ const FRAGMENT_SHADER = `#version 300 es
     vec4 d = ${V_INVERSE_PLANE_WORLD_ROTATION_MATRIX} * vec4(normalize(${U_CAMERA_POSITION} - ${V_WORLD_POSITION}.xyz), 1);
     float c = dot(vec3(0, 0, 1), d.xyz);
     float s = length(cross(vec3(0, 0, 1), d.xyz));
+    // multiplying by cos, while incorrect, reduces burring as c approaches 0
+    //float depthScale = c;
+    //float depthScale = dot(${V_NORMAL}.xyz, vec3(0, 0, 1));
+    float depthScale = 1.;
 
-    float depth = -.5;
+    float depth = -${DEPTH_RANGE/2};
     vec4 tm;
     int count = 0;
     vec4 p;
@@ -114,19 +119,23 @@ const FRAGMENT_SHADER = `#version 300 es
       depth += ${STEP};
       p = ${V_PLANE_POSITION} - d * depth / c;
       vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy / ${MATERIAL_SCALE}. + ${V_PLANE_POSITION}.zw);
-      float surfaceDepth = tm1.z - .5;
+      float surfaceDepth = (tm1.z - .5) * ${DEPTH_RANGE} * depthScale;
       if (surfaceDepth < depth) {
         float d0 = depth - ${STEP};
-        float s0 = d0 - (tm.z - .5);
+        float s0 = d0 - (tm.z - .5) * ${DEPTH_RANGE} * depthScale;
         float s1 = d0 - surfaceDepth;
         float w = ${STEP} * s/c;
-        float si = s0 * ${-STEP}/(${-STEP} - s1 + s0);
-        //float si = s1;
-        //float si = s0;
-        //float si = -${STEP};
-        depth -= ${STEP} + si;
-        p = ${V_PLANE_POSITION} - d * (d0 - si) / c;
-        count = ${NUM_STEPS};
+        float divisor = (${-STEP} - s1 + s0);
+        // make sure it's not almost parallel, if it is, defer until next iteration
+        if (abs(divisor) > .001) {
+          float si = s0 * ${-STEP}/divisor;
+          //float si = s1;
+          //float si = s0;
+          //float si = -${STEP};
+          depth -= ${STEP} + si;
+          p = ${V_PLANE_POSITION} - d * (d0 - si) / c;
+          count = ${NUM_STEPS};  
+        }
       } else {
         tm = tm1;
       }
@@ -146,7 +155,7 @@ const FRAGMENT_SHADER = `#version 300 es
     vec4 color = mix(${U_MATERIAL_COLOR_2}, ${U_MATERIAL_COLOR_1}, abs(tm.a * 2. - 1.));
     ${O_COLOR} = vec4(
       mix(
-        color.rgb * max(0., (dot(m, normalize(vec3(3, 1, 2)))+.5)*.7),
+        color.rgb * pow(max(0., (dot(m, normalize(vec3(3, 1, 2)))+1.)/2.), color.a * 2.),
         //vec3((p.xyz + 1.)/2.),
         //tm.xyz,
         //(p.xyz + 1.)/2.,
@@ -250,7 +259,7 @@ window.onload = () => {
     toPlane(0, -1, 0, 2),
   ];
 
-  const sphere1 = sphere(shape8, 2.6, 2);
+  const sphere1 = sphere(shape8, 2.6, -1);
   const sphere2 = convexShapeExpand(sphere1, .1)
   
   const segmentsz = 6;
@@ -657,11 +666,11 @@ window.onload = () => {
 
   // add in some textures
   const materials: Material[][] = [
-    [createFlatMaterialFactory(127, 127)],
-    [createFlatMaterialFactory(127, 127), staticFactory(40, 40, 99, 9999)],
-    [createFlatMaterialFactory(120, 127), riverStonesFactory(9, 49, 29, 599), staticFactory(6, 0, 40, 9999)],
-    [createFlatMaterialFactory(127, 127), riverStonesFactory(9, 29, 99, 99)],
-    [createFlatMaterialFactory(127, 127), cratersFactory(30, 99, 9), staticFactory(9, 9, 40, 9999)],
+    [createFlatMaterialFactory(128, 127)],
+    [createFlatMaterialFactory(128, 127), staticFactory(9, 9, 99, 9999)],
+    [createFlatMaterialFactory(150, 127), riverStonesFactory(9, 49, 29, 599), staticFactory(6, 0, 40, 9999)],
+    [createFlatMaterialFactory(128, 127), riverStonesFactory(9, 39, 99, 99), staticFactory(6, 0, 99, 999)],
+    [createFlatMaterialFactory(128, 127), cratersFactory(30, 99, 9), staticFactory(9, 99, 40, 999)],
   ];
   const materialCanvases = materials.map((materials, i) => {
     const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
@@ -990,10 +999,10 @@ window.onload = () => {
         gl.uniform1i(uMaterialTexture, material);
         break;
       case 'a':
-        gl.uniform4f(uMaterialColor1, Math.random(), Math.random(), Math.random(), 1);
+        gl.uniform4f(uMaterialColor1, Math.random(), Math.random(), Math.random(), Math.random());
         break;
       case 's':
-        gl.uniform4f(uMaterialColor2, Math.random(), Math.random(), Math.random(), 1);
+        gl.uniform4f(uMaterialColor2, Math.random(), Math.random(), Math.random(), Math.random());
         break;
       case 'd':
         gl.uniform4f(uLineColor, Math.random(), Math.random(), Math.random(), 1);
@@ -1008,8 +1017,8 @@ window.onload = () => {
   //gl.uniform4f(uLineColor, .8, .9, 1, 1);
   gl.uniform4f(uLineColor, 0, 0, 0, 1);
   gl.uniform1i(uMaterialTexture, 1);
-  gl.uniform4f(uMaterialColor1, .3, .3, .5, 1);
-  gl.uniform4f(uMaterialColor2, .2, .2, .4, 1);
+  gl.uniform4f(uMaterialColor1, .3, .3, .5, .5);
+  gl.uniform4f(uMaterialColor2, .2, .2, .4, .5);
   gl.uniform3f(uCameraPosition, 0, 0, 0);
   let then = 0;
   function animate(now: number) {

@@ -17,7 +17,7 @@ export function staticFactory(
           let index = ((py % imageData.height) * imageData.width
             + (px % imageData.width)) * 4 + 3;
           const v = imageData.data[index];
-          imageData.data[index] = Math.max(127, Math.min(255, v - delta)) | 0;
+          imageData.data[index] = Math.max(127, Math.min(255, v + delta)) | 0;
         }
       }
     }

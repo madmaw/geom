@@ -1,5 +1,6 @@
 import { vec3 } from "gl-matrix";
 import { Material, imageDataMaterial } from "./material";
+import { DEPTH_RANGE } from "../constants";
 
 export function riverStonesFactory(
   minRadius: number,
@@ -29,9 +30,7 @@ export function riverStonesFactory(
             const existingDepth = imageData.data[index + 2];
             const dz = Math.sqrt(dzsq);
             const depth = Math.min(stoneDepth, dz);
-            // TODO we lose too much precion here and the range of the depth is too wide (-.5 -> .5)
-            // we can fix this in the shader
-            const depthValue = z - depth/2;
+            const depthValue = z - depth / (DEPTH_RANGE * 2);
             if (depthValue < existingDepth) {
               const [nx, ny] = dz < stoneDepth ? vec3.normalize(vec3.create(), [dx, dy, dz]) : [0, 0];
               imageData.data.set([
