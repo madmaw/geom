@@ -20,8 +20,8 @@ export function cratersFactory(minDepth: number, maxDepth: number, quantity: num
               + (px % imageData.width)) * 4;
             const existingDepth = imageData.data[index + 2];
             const depth = Math.sqrt(dzsq);
-            const depthValue = z + depth / (DEPTH_RANGE * 2);
-            if (depthValue > existingDepth) {
+            const depthValue = z - depth / (DEPTH_RANGE * 2);
+            if (depthValue < existingDepth) {
               const [nx, ny] = vec3.normalize(vec3.create(), [-dx, -dy, -depth]);
 
               imageData.data.set([

@@ -19,9 +19,9 @@ type MaybeInvertedFace = Face & {
 
 const LINE_TEXTURE_DIMENSION = 4096;
 //const LINE_TEXTURE_DIMENSION = 512;
-const LINE_TEXTURE_SCALE = 48;
+const LINE_TEXTURE_SCALE = 64;
 const LINE_TEXTURE_BUFFER = 24;
-const BORDER_EXPAND = 0.02;
+const BORDER_EXPAND = .03;
 const MATERIAL_TEXTURE_DIMENSION = 4096;
 //const MATERIAL_TEXTURE_DIMENSION = 1024;
 const MATERIAL_DEPTH_SCALE = 256/(MATERIAL_TEXTURE_DIMENSION * DEPTH_RANGE);
@@ -80,7 +80,7 @@ const VERTEX_SHADER = `#version 300 es
   }
 `;
 
-const STEP = .01;
+const STEP = .005;
 const NUM_STEPS = DEPTH_RANGE/STEP | 0;
 
 const FRAGMENT_SHADER = `#version 300 es
@@ -104,6 +104,7 @@ const FRAGMENT_SHADER = `#version 300 es
 
   void main(void) {
     vec4 d = ${V_INVERSE_PLANE_WORLD_ROTATION_MATRIX} * vec4(normalize(${U_CAMERA_POSITION} - ${V_WORLD_POSITION}.xyz), 1);
+    // NOTE: c will be positive for camera facing surfaces
     float c = dot(vec3(0, 0, 1), d.xyz);
     float s = length(cross(vec3(0, 0, 1), d.xyz));
     // multiplying by cos, while incorrect, reduces burring as c approaches 0
@@ -111,30 +112,30 @@ const FRAGMENT_SHADER = `#version 300 es
     //float depthScale = dot(${V_NORMAL}.xyz, vec3(0, 0, 1));
     float depthScale = ${MATERIAL_DEPTH_SCALE}/${U_LINE_WIDTH}.w;
 
-    float depth = -${DEPTH_RANGE/2};
+    float depth = ${DEPTH_RANGE/2};
     vec4 tm;
     int count = 0;
     vec4 p;
     vec4 tl;
     while (count < ${NUM_STEPS}) {
-      depth += ${STEP};
-      p = ${V_PLANE_POSITION} - d * depth / c;
+      depth -= ${STEP};
+      p = ${V_PLANE_POSITION} + d * depth / c;
       vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw);
       float surfaceDepth = (tm1.z - .5) * ${DEPTH_RANGE} * depthScale;
-      if (surfaceDepth < depth) {
-        float d0 = depth - ${STEP};
+      if (surfaceDepth > depth) {
+        float d0 = depth + ${STEP};
         float s0 = d0 - (tm.z - .5) * ${DEPTH_RANGE} * depthScale;
         float s1 = d0 - surfaceDepth;
         //float w = ${STEP} * s/c;
-        float divisor = (${-STEP} - s1 + s0);
+        float divisor = (${STEP} - s1 + s0);
         // make sure it's not almost parallel, if it is, defer until next iteration
         if (abs(divisor) > .0) {
-          float si = s0 * ${-STEP}/divisor;
+          float si = s0 * ${STEP}/divisor;
           //float si = s1;
           //float si = s0;
           //float si = -${STEP};
-          depth -= ${STEP} + si;
-          p = ${V_PLANE_POSITION} - d * (d0 - si) / c;
+          depth += ${STEP} - si;
+          p = ${V_PLANE_POSITION} + d * (d0 - si) / c;
           count = ${NUM_STEPS};  
         }
       } else {
@@ -145,7 +146,7 @@ const FRAGMENT_SHADER = `#version 300 es
         ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
       );
       count++;
-      if (tl.a < .5 && depth > 0.) {
+      if (tl.a < .5 && depth < 0.) {
         count = ${NUM_STEPS};
       }
     }
@@ -160,7 +161,7 @@ const FRAGMENT_SHADER = `#version 300 es
         //vec3((p.xyz + 1.)/2.),
         //tm.xyz,
         //(p.xyz + 1.)/2.,
-        //vec3(depth + .5),
+        //vec3(depth + .5, 0., c > 0. ? 1. : 0.),
         //vec3(count/${NUM_STEPS}),
         //mix(${U_LINE_COLOR}.rgb, ${U_MATERIAL_COLOR_1}.rgb, min(1., abs(depth) * 9.)),
         ${U_LINE_COLOR}.rgb,
@@ -331,13 +332,13 @@ window.onload = () => {
   }).filter(v => v != null);
   
   const shapes: readonly Shape[] = ([
-    [cube, []],
+    //[cube, []],
     //[shape1, []],
     //[shape7, [shape6]],
     // [shape5, [shape6]],
     // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, columns],
-    //[roundedCube1, []],
+    [roundedCube1, []],
     //[sphere, []],
     //[sphere, [column]],
     //[disc, []],
@@ -677,19 +678,19 @@ window.onload = () => {
 
 
 
-  // want a space so we can have transparent area to map outlines to
-  let textureX = LINE_TEXTURE_SCALE;
+  // want a space so we can have transparent area to map inverted shapes to
+  let textureX = LINE_TEXTURE_SCALE * 4;
   let textureY = 0;
-  let textureMaxHeight = LINE_TEXTURE_SCALE;
+  let textureMaxHeight = LINE_TEXTURE_SCALE * 4;
   //ctx.lineCap = 'round';
 
   // add in some textures
   const materials: Material[][] = [
     [createFlatMaterialFactory(127, 1)],
-    [createFlatMaterialFactory(128, .7), staticFactory(9, 9, 99, 9999)],
+    [createFlatMaterialFactory(128, .7), staticFactory(9, 39, 99, 9999)],
     [createFlatMaterialFactory(128, .5), riverStonesFactory(9, 49, 39, 3999), staticFactory(6, 9, 40, 9999)],
-    [createFlatMaterialFactory(128, .5), staticFactory(1, 9, 99, 9999), riverStonesFactory(9, 99, 999, 999)],
-    [createFlatMaterialFactory(128, 1), cratersFactory(30, 99, 99), staticFactory(9, 99, 40, 9999)],
+    [createFlatMaterialFactory(128, .5), staticFactory(1, 9, 99, 9999), riverStonesFactory(9, 39, 999, 999)],
+    [createFlatMaterialFactory(128, 1), cratersFactory(9, 99, 99), staticFactory(9, 99, 40, 9999)],
   ];
   const materialCanvases = materials.map((materials, i) => {
     const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
@@ -739,130 +740,132 @@ window.onload = () => {
         [...polygonPoints[0]] as [number, number, number],
         [...polygonPoints[0] as [number, number, number]],
       ]);
-
-      const width = (maxX - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER * 2 | 0;
-      const height = (maxY - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER * 2 | 0;
-      
-      // TODO ignore inverted face textures
-      if (textureX + width > ctx.canvas.width) {
-        textureX = 0;
-        textureY += textureMaxHeight;
-        textureMaxHeight = 0;
-      }
-      const originalTextureX = textureX;
-      textureX += width;
-      textureMaxHeight = Math.max(height, textureMaxHeight);
-      // function toTextureCoordinate([px, py]: ReadonlyVec3): [number, number] {
-      //   return [
-      //     originalTextureX + (px - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER, 
-      //     textureY + (py - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER,
-      //   ];
-      // }
-      const lineConnections = new Map<[number, number, number], [number, number, number]>();
-      const normal = [...vec3.transformMat4(
-        vec3.create(),
-        NORMAL_Z,
-        rotateToWorldCoordinates,
-      )] as [number, number, number];
-
-      polygons.forEach(polygon => {
-        ctx.beginPath();
-        polygon.forEach((currentPoint, i) => {
-          const currentWorldPoint = getWorldPoint(currentPoint, toWorldCoordinates);
-          const nextPoint = polygon[(i + 1)%polygon.length];
-          const nextWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
-          const adjacentFace = pointAdjacency.get(nextWorldPoint).get(currentWorldPoint);
-          const adjacentNormal = vec3.transformMat4(
-            vec3.create(), NORMAL_Z, adjacentFace.rotateToWorldCoordinates,
-          );
-          const [x, y] = currentPoint;
-          const px = originalTextureX + (x - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
-          const py = textureY + (y - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
-          ctx.lineTo(px, py);
-          const sinAngle = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
-          if (sinAngle > EPSILON) {      
-            lineConnections.set(currentWorldPoint, nextWorldPoint);
-          }
-        });
-        ctx.closePath();
-        ctx.fill();
-        //ctx.lineWidth = 1;
-        //ctx.strokeStyle = '#000';
-        ctx.stroke();
-      });
-
-      // const imageData = ctx.createImageData(width, height);
-      // const normalArray = normal.map(v => Math.round((v + 1) * 127.5));
-      // const lineEntries = [...lineConnections.entries()];
-      // for(let py=0; py<height; py++) {
-      //   //const y = (py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER;
-      //   const y = (py - TEXTURE_BUFFER)/TEXTURE_SCALE + minY;
-      //   for(let px=0; px<width; px++) {
-      //     //const x = (px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER;
-      //     const x = (px - TEXTURE_BUFFER)/TEXTURE_SCALE + minX;
-      //     const index = (py * width + px) * 4;
-      //     // find the closest line
-      //     let minD = 1;
-      //     lineEntries.forEach(worldPoints => {
-      //       const line: Line = worldPoints.map(worldPoint => {
-      //         return vec3.transformMat4(
-      //           vec3.create(),
-      //           worldPoint,
-      //           fromWorldCoordinates,
-      //         );
-      //       }) as any; 
-      //       const d = lineDistance(line, [x, y]);
-      //       minD = Math.min(d, minD);
-      //     });
-      //     imageData.data.set([...normalArray, 127 + minD * 128 | 0], index);
-      //   }
-      // }
-      // ctx.putImageData(imageData, originalTextureX, textureY);
-
-      //ctx.lineCap = 'round';
-      // ctx.fillStyle = 'rgba(0, 0, 0, .5)';
-      // ctx.globalCompositeOperation = 'destination-out';
-      const lineConnectionValues = new Set(lineConnections.values());
-      while (lineConnections.size) {
-        const lineConnectionKeys = [...lineConnections.keys()];
-        // find the start of a line
-        let currentWorldPoint = lineConnectionKeys.find(point => {
-          return !lineConnectionValues.has(point);
-        });
-        const closePath = !currentWorldPoint;
-        if (closePath) {
-          // if there are no unclosed lines, we are circular and can
-          // start anywhere with any point
-          currentWorldPoint = lineConnectionKeys[0];
+      let originalTextureX: number;
+      if (!inverted) {
+        const width = (maxX - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER * 2 | 0;
+        const height = (maxY - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER * 2 | 0;
+        
+        if (textureX + width > ctx.canvas.width) {
+          textureX = 0;
+          textureY += textureMaxHeight;
+          textureMaxHeight = 0;
         }
-
-        ctx.beginPath();
-        while (currentWorldPoint) {
-          const nextWorldPoint = lineConnections.get(currentWorldPoint);
-          lineConnections.delete(currentWorldPoint);
-          const [x, y] = vec3.transformMat4(
-            vec3.create(),
-            currentWorldPoint,
-            fromWorldCoordinates,
-          );
-          const px = originalTextureX + (x - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
-          const py = textureY + (y - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
-          ctx.lineTo(px, py);
-          // round corners
-          currentWorldPoint = nextWorldPoint;
-        }
-        if (closePath) {
+        originalTextureX = textureX;
+        textureX += width;
+        textureMaxHeight = Math.max(height, textureMaxHeight);
+        // function toTextureCoordinate([px, py]: ReadonlyVec3): [number, number] {
+        //   return [
+        //     originalTextureX + (px - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER, 
+        //     textureY + (py - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER,
+        //   ];
+        // }
+        const lineConnections = new Map<[number, number, number], [number, number, number]>();
+        const normal = [...vec3.transformMat4(
+          vec3.create(),
+          NORMAL_Z,
+          rotateToWorldCoordinates,
+        )] as [number, number, number];
+  
+        polygons.forEach(polygon => {
+          ctx.beginPath();
+          polygon.forEach((currentPoint, i) => {
+            const currentWorldPoint = getWorldPoint(currentPoint, toWorldCoordinates);
+            const nextPoint = polygon[(i + 1)%polygon.length];
+            const nextWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
+            const adjacentFace = pointAdjacency.get(nextWorldPoint).get(currentWorldPoint);
+            const adjacentNormal = vec3.transformMat4(
+              vec3.create(), NORMAL_Z, adjacentFace.rotateToWorldCoordinates,
+            );
+            const [x, y] = currentPoint;
+            const px = originalTextureX + (x - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
+            const py = textureY + (y - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
+            ctx.lineTo(px, py);
+            const sinAngle = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
+            if (sinAngle > EPSILON) {      
+              lineConnections.set(currentWorldPoint, nextWorldPoint);
+            }
+          });
           ctx.closePath();
-        }
-        ctx.save();
-        ctx.globalCompositeOperation = 'source-atop';
-        ['red', '#FF0', '#FFF'].forEach((strokeStyle, i) => {
-          ctx.strokeStyle = strokeStyle;
-          ctx.lineWidth = Math.pow(2, 2 - i);
-          ctx.stroke();  
+          ctx.fill();
+          //ctx.lineWidth = 1;
+          //ctx.strokeStyle = '#000';
+          ctx.stroke();
         });
-        ctx.restore();
+  
+        // const imageData = ctx.createImageData(width, height);
+        // const normalArray = normal.map(v => Math.round((v + 1) * 127.5));
+        // const lineEntries = [...lineConnections.entries()];
+        // for(let py=0; py<height; py++) {
+        //   //const y = (py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER;
+        //   const y = (py - TEXTURE_BUFFER)/TEXTURE_SCALE + minY;
+        //   for(let px=0; px<width; px++) {
+        //     //const x = (px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER;
+        //     const x = (px - TEXTURE_BUFFER)/TEXTURE_SCALE + minX;
+        //     const index = (py * width + px) * 4;
+        //     // find the closest line
+        //     let minD = 1;
+        //     lineEntries.forEach(worldPoints => {
+        //       const line: Line = worldPoints.map(worldPoint => {
+        //         return vec3.transformMat4(
+        //           vec3.create(),
+        //           worldPoint,
+        //           fromWorldCoordinates,
+        //         );
+        //       }) as any; 
+        //       const d = lineDistance(line, [x, y]);
+        //       minD = Math.min(d, minD);
+        //     });
+        //     imageData.data.set([...normalArray, 127 + minD * 128 | 0], index);
+        //   }
+        // }
+        // ctx.putImageData(imageData, originalTextureX, textureY);
+  
+        //ctx.lineCap = 'round';
+        // ctx.fillStyle = 'rgba(0, 0, 0, .5)';
+        // ctx.globalCompositeOperation = 'destination-out';
+        const lineConnectionValues = new Set(lineConnections.values());
+        while (lineConnections.size) {
+          const lineConnectionKeys = [...lineConnections.keys()];
+          // find the start of a line
+          let currentWorldPoint = lineConnectionKeys.find(point => {
+            return !lineConnectionValues.has(point);
+          });
+          const closePath = !currentWorldPoint;
+          if (closePath) {
+            // if there are no unclosed lines, we are circular and can
+            // start anywhere with any point
+            currentWorldPoint = lineConnectionKeys[0];
+          }
+  
+          ctx.beginPath();
+          while (currentWorldPoint) {
+            const nextWorldPoint = lineConnections.get(currentWorldPoint);
+            lineConnections.delete(currentWorldPoint);
+            const [x, y] = vec3.transformMat4(
+              vec3.create(),
+              currentWorldPoint,
+              fromWorldCoordinates,
+            );
+            const px = originalTextureX + (x - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
+            const py = textureY + (y - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER;
+            ctx.lineTo(px, py);
+            // round corners
+            currentWorldPoint = nextWorldPoint;
+          }
+          if (closePath) {
+            ctx.closePath();
+          }
+          ctx.save();
+          ctx.globalCompositeOperation = 'source-atop';
+          ['red', '#FF0', '#FFF'].forEach((strokeStyle, i) => {
+            ctx.strokeStyle = strokeStyle;
+            ctx.lineWidth = Math.pow(2, 2 - i);
+            ctx.stroke();  
+          });
+          ctx.restore();
+        }
       }
+
 
       // hashes to transformed points?
       const hashesToPoints = polygonPoints.reduce((acc, point) => {
@@ -872,14 +875,14 @@ window.onload = () => {
 
       const x = (-minX * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + originalTextureX)/LINE_TEXTURE_DIMENSION;
       const y = (-minY * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + textureY)/LINE_TEXTURE_DIMENSION;
-      const newLineTextureOffsets = uniquePoints.map<[number, number]>((worldPoint) => {
+      const newLineTextureOffsets = uniquePoints.map<[number, number]>(() => {
         // const [px, py] = vec3.transformMat4(vec3.create(), worldPoint, fromWorldCoordinates);
         // const x = ((px - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + originalTextureX)/geometryLineCanvas.width;
         // const y = ((py - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER + textureY)/geometryLineCanvas.height;
-        return [x, y];
+        return inverted ? [0, 0] : [x, y];
       });
 
-      const newNormalTransforms = uniquePoints.map(worldPoint => {
+      const newNormalTransforms = uniquePoints.map(() => {
         // const normals = pointNormals.get(worldPoint);
         // const normal = normals.reduce<vec3>((acc, normal) => {
         //   return vec3.add(

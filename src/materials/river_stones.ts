@@ -30,8 +30,8 @@ export function riverStonesFactory(
             const existingDepth = imageData.data[index + 2];
             const dz = Math.sqrt(dzsq);
             const depth = Math.min(stoneDepth, dz);
-            const depthValue = z - depth / (DEPTH_RANGE * 2);
-            if (depthValue < existingDepth) {
+            const depthValue = z + depth / (DEPTH_RANGE * 2);
+            if (depthValue > existingDepth) {
               const [nx, ny] = dz < stoneDepth ? vec3.normalize(vec3.create(), [dx, dy, dz]) : [0, 0];
               imageData.data.set([
                 (nx + 1) * 127 | 0,
