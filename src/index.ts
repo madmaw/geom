@@ -18,11 +18,13 @@ type MaybeInvertedFace = Face & {
 };
 
 const LINE_TEXTURE_DIMENSION = 4096;
-const LINE_TEXTURE_SCALE = 32;
-const LINE_TEXTURE_BUFFER = 16;
-const BASE_LINE_WIDTH = 1;
+//const LINE_TEXTURE_DIMENSION = 512;
+const LINE_TEXTURE_SCALE = 48;
+const LINE_TEXTURE_BUFFER = 24;
 const BORDER_EXPAND = 0.02;
-const MATERIAL_TEXTURE_DIMENSION = 1024;
+const MATERIAL_TEXTURE_DIMENSION = 4096;
+//const MATERIAL_TEXTURE_DIMENSION = 1024;
+const MATERIAL_DEPTH_SCALE = 256/(MATERIAL_TEXTURE_DIMENSION * DEPTH_RANGE);
 
 const A_VERTEX_WORLD_POSITION = "aVertexWorldPosition";
 const A_VERTEX_PLANE_POSITION = 'aVertexPlanePosition';
@@ -34,6 +36,7 @@ const U_MODEL_ROTATION_MATRIX = 'uModelRotation';
 const U_PROJECTION_MATRIX = "uProjection";
 const U_LINE_TEXTURE = 'uLine';
 const U_LINE_COLOR = 'uLineColor';
+const U_LINE_WIDTH = 'uLineWidth';
 const U_MATERIAL_TEXTURE = 'uMaterial';
 const U_MATERIAL_COLOR_1 = 'uMaterialColor1';
 const U_MATERIAL_COLOR_2 = 'uMaterialColor2';
@@ -77,9 +80,8 @@ const VERTEX_SHADER = `#version 300 es
   }
 `;
 
-const STEP = .02;
+const STEP = .01;
 const NUM_STEPS = DEPTH_RANGE/STEP | 0;
-const MATERIAL_SCALE = 4;
 
 const FRAGMENT_SHADER = `#version 300 es
   precision lowp float;
@@ -92,6 +94,7 @@ const FRAGMENT_SHADER = `#version 300 es
   in vec2 ${V_LINE_TEXTURE_COORD};
   uniform sampler2D ${U_LINE_TEXTURE};
   uniform vec4 ${U_LINE_COLOR};
+  uniform vec4 ${U_LINE_WIDTH};
   uniform sampler2D ${U_MATERIAL_TEXTURE};
   uniform vec4 ${U_MATERIAL_COLOR_1};
   uniform vec4 ${U_MATERIAL_COLOR_2};
@@ -106,26 +109,26 @@ const FRAGMENT_SHADER = `#version 300 es
     // multiplying by cos, while incorrect, reduces burring as c approaches 0
     //float depthScale = c;
     //float depthScale = dot(${V_NORMAL}.xyz, vec3(0, 0, 1));
-    float depthScale = 1.;
+    float depthScale = ${MATERIAL_DEPTH_SCALE}/${U_LINE_WIDTH}.w;
 
     float depth = -${DEPTH_RANGE/2};
     vec4 tm;
     int count = 0;
     vec4 p;
     vec4 tl;
-    while (c > 0. && count < ${NUM_STEPS}) {
+    while (count < ${NUM_STEPS}) {
       depth += ${STEP};
       p = ${V_PLANE_POSITION} - d * depth / c;
-      vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy / ${MATERIAL_SCALE}. + ${V_PLANE_POSITION}.zw);
+      vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw);
       float surfaceDepth = (tm1.z - .5) * ${DEPTH_RANGE} * depthScale;
       if (surfaceDepth < depth) {
         float d0 = depth - ${STEP};
         float s0 = d0 - (tm.z - .5) * ${DEPTH_RANGE} * depthScale;
         float s1 = d0 - surfaceDepth;
-        float w = ${STEP} * s/c;
+        //float w = ${STEP} * s/c;
         float divisor = (${-STEP} - s1 + s0);
         // make sure it's not almost parallel, if it is, defer until next iteration
-        if (abs(divisor) > .001) {
+        if (abs(divisor) > .0) {
           float si = s0 * ${-STEP}/divisor;
           //float si = s1;
           //float si = s0;
@@ -142,12 +145,12 @@ const FRAGMENT_SHADER = `#version 300 es
         ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
       );
       count++;
-      if (tl.g < .5 && depth > 0.) {
+      if (tl.a < .5 && depth > 0.) {
         count = ${NUM_STEPS};
       }
     }
 
-    tm = texture(${U_MATERIAL_TEXTURE}, p.xy / ${MATERIAL_SCALE}. + ${V_PLANE_POSITION}.zw);
+    tm = texture(${U_MATERIAL_TEXTURE}, p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw);
     vec2 n = tm.xy * 2. - 1.;
     vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
     vec4 color = mix(${U_MATERIAL_COLOR_2}, ${U_MATERIAL_COLOR_1}, abs(tm.a * 2. - 1.));
@@ -163,7 +166,7 @@ const FRAGMENT_SHADER = `#version 300 es
         ${U_LINE_COLOR}.rgb,
         //tl.xyz,
         //0.
-        max(tl.r, 1. - tl.g)
+        max(length(tl.rgb * ${U_LINE_WIDTH}.xyz), 1. - tl.a)
       ),
       1
     );
@@ -257,7 +260,7 @@ window.onload = () => {
     toPlane(0, -1, 0, 2),
   ];
 
-  const roundedCube1 = round(round(cube, -1, false), -.7, true);
+  const roundedCube1 = round(round(cube, -1, false), -.8, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
   const segmentsz = 12;
@@ -290,8 +293,6 @@ window.onload = () => {
     toPlane(0, 0, -1, 5),
     toPlane(0, 0, 1, 5),
   ]);
-
-
 
   const disc: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
     const az = Math.PI * 2 * i / arrz.length;
@@ -330,11 +331,11 @@ window.onload = () => {
   }).filter(v => v != null);
   
   const shapes: readonly Shape[] = ([
-    //[cube, []],
+    [cube, []],
     //[shape1, []],
     //[shape7, [shape6]],
-    [shape5, [shape6]],
-    [shape1, [shape2, shape3, shape4, shape6]],
+    // [shape5, [shape6]],
+    // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, columns],
     //[roundedCube1, []],
     //[sphere, []],
@@ -457,6 +458,7 @@ window.onload = () => {
     uProjectionMatrix,
     uLineTexture,
     uLineColor,
+    uLineWidth,
     uMaterialTexture,
     uMaterialColor1,
     uMaterialColor2,
@@ -467,6 +469,7 @@ window.onload = () => {
     U_PROJECTION_MATRIX,
     U_LINE_TEXTURE,
     U_LINE_COLOR,
+    U_LINE_WIDTH,
     U_MATERIAL_TEXTURE,
     U_MATERIAL_COLOR_1,
     U_MATERIAL_COLOR_2,
@@ -682,11 +685,11 @@ window.onload = () => {
 
   // add in some textures
   const materials: Material[][] = [
-    [createFlatMaterialFactory(128, 1)],
+    [createFlatMaterialFactory(127, 1)],
     [createFlatMaterialFactory(128, .7), staticFactory(9, 9, 99, 9999)],
-    [createFlatMaterialFactory(128, .5), riverStonesFactory(9, 49, 39, 299), staticFactory(6, 0, 40, 9999)],
-    [createFlatMaterialFactory(128, .5), riverStonesFactory(9, 39, 99, 99), staticFactory(6, 0, 99, 999)],
-    [createFlatMaterialFactory(128, 1), cratersFactory(30, 99, 9), staticFactory(9, 99, 40, 999)],
+    [createFlatMaterialFactory(128, .5), riverStonesFactory(9, 49, 39, 3999), staticFactory(6, 9, 40, 9999)],
+    [createFlatMaterialFactory(128, .5), staticFactory(1, 9, 99, 9999), riverStonesFactory(9, 99, 999, 999)],
+    [createFlatMaterialFactory(128, 1), cratersFactory(30, 99, 99), staticFactory(9, 99, 40, 9999)],
   ];
   const materialCanvases = materials.map((materials, i) => {
     const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
@@ -702,10 +705,9 @@ window.onload = () => {
   geometryLineCanvas.height = LINE_TEXTURE_DIMENSION;
   const ctx = geometryLineCanvas.getContext('2d');
 
-  // fill it with green
-  ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
-  ctx.fillStyle = '#0F0';
-  ctx.lineWidth = 2;
+  // leave it as alpha
+  //ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
+  //ctx.fillStyle = '#000';
 
   const [worldPoints, planePoints, normalTransforms, lineTextureOffsets, indices] = faces.reduce<[
     // world position points
@@ -784,8 +786,8 @@ window.onload = () => {
         });
         ctx.closePath();
         ctx.fill();
-        ctx.strokeStyle = '#0FF';
-        // ctx.lineWidth = BASE_LINE_WIDTH;
+        //ctx.lineWidth = 1;
+        //ctx.strokeStyle = '#000';
         ctx.stroke();
       });
 
@@ -820,8 +822,6 @@ window.onload = () => {
       //ctx.lineCap = 'round';
       // ctx.fillStyle = 'rgba(0, 0, 0, .5)';
       // ctx.globalCompositeOperation = 'destination-out';
-      ctx.strokeStyle = '#F00';
-      ctx.lineWidth = BASE_LINE_WIDTH;
       const lineConnectionValues = new Set(lineConnections.values());
       while (lineConnections.size) {
         const lineConnectionKeys = [...lineConnections.keys()];
@@ -854,7 +854,14 @@ window.onload = () => {
         if (closePath) {
           ctx.closePath();
         }
-        ctx.stroke();
+        ctx.save();
+        ctx.globalCompositeOperation = 'source-atop';
+        ['red', '#FF0', '#FFF'].forEach((strokeStyle, i) => {
+          ctx.strokeStyle = strokeStyle;
+          ctx.lineWidth = Math.pow(2, 2 - i);
+          ctx.stroke();  
+        });
+        ctx.restore();
       }
 
       // hashes to transformed points?
@@ -1080,6 +1087,22 @@ window.onload = () => {
         material = (material%materials.length) + 1;
         gl.uniform1i(uMaterialTexture, material);
         break;
+      case 'ArrowLeft':
+        cameraX-=.1;
+        setCameraPosition();
+        break;
+      case 'ArrowRight':
+        cameraX+=.1;
+        setCameraPosition();
+        break;
+      case 'ArrowUp':
+        cameraY+=.1;
+        setCameraPosition();
+        break;
+      case 'ArrowDown':
+        cameraY-=.1;
+        setCameraPosition();
+        break;
       case 'a':
         gl.uniform4f(uMaterialColor1, Math.random(), Math.random(), Math.random(), Math.random());
         break;
@@ -1088,20 +1111,56 @@ window.onload = () => {
         break;
       case 'd':
         gl.uniform4f(uLineColor, Math.random(), Math.random(), Math.random(), 1);
-        break;        
+        break;
+      case 'z':
+        lineWidthIndex--;
+        setLineWidth();
+        break;
+      case 'x':
+        lineWidthIndex++;
+        setLineWidth();
+        break;
+      case 'w':
+        materialScale*=2;
+        setLineWidth();
+        console.log('material scale', materialScale);
+        break;
+      case 'q':
+        materialScale/=2;
+        setLineWidth();
+        console.log('material scale', materialScale);
+        break;
     } 
   };
 
+  let lineWidthIndex = 0;
+  let materialScale = MATERIAL_DEPTH_SCALE;
+  function setLineWidth() {
+    gl.uniform4f(
+      uLineWidth,
+      lineWidthIndex == 0 ? 1 : 0,
+      lineWidthIndex == 1 ? 1 : 0,
+      lineWidthIndex == 2 ? 1 : 0,
+      materialScale,
+    );
+  }
+  let cameraX = 0;
+  let cameraY = 0;
+  let cameraZ = 0;
+  function setCameraPosition() {
+    gl.uniform3f(uCameraPosition, cameraX, cameraY, cameraZ);
+  }
+
   const fpsDiv = document.getElementById('fps');
   const lastFrameTimes: number[] = [];
-  gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
   gl.uniform1i(uLineTexture, 0);
   //gl.uniform4f(uLineColor, .8, .9, 1, 1);
   gl.uniform4f(uLineColor, 0, 0, 0, 1);
   gl.uniform1i(uMaterialTexture, 1);
   gl.uniform4f(uMaterialColor1, .3, .3, .5, .5);
   gl.uniform4f(uMaterialColor2, .2, .2, .4, .5);
-  gl.uniform3f(uCameraPosition, 0, 0, 0);
+  setLineWidth();
+  setCameraPosition();
   let then = 0;
   function animate(now: number) {
     const delta = now - then;
@@ -1116,7 +1175,12 @@ window.onload = () => {
     }
 
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
+    const cameraPositionAndProjectionMatrix = mat4.multiply(
+      mat4.create(),
+      projectionMatrix,
+      mat4.fromTranslation(mat4.create(), [-cameraX, -cameraY, -cameraZ]),
+    );
+    gl.uniformMatrix4fv(uProjectionMatrix, false, cameraPositionAndProjectionMatrix);
     gl.uniformMatrix4fv(uModelViewMatrix, false, modelPositionMatrix);
     gl.uniformMatrix4fv(uModelRotationMatrix, false, modelRotationMatrix);
     
