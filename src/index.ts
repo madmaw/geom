@@ -19,8 +19,8 @@ type MaybeInvertedFace = Face & {
 
 const LINE_TEXTURE_DIMENSION = 4096;
 //const LINE_TEXTURE_DIMENSION = 512;
-const LINE_TEXTURE_SCALE = 64;
-const LINE_TEXTURE_BUFFER = 24;
+const LINE_TEXTURE_SCALE = 96;
+const LINE_TEXTURE_BUFFER = 48;
 const BORDER_EXPAND = .03;
 const MATERIAL_TEXTURE_DIMENSION = 4096;
 //const MATERIAL_TEXTURE_DIMENSION = 1024;
@@ -80,7 +80,7 @@ const VERTEX_SHADER = `#version 300 es
   }
 `;
 
-const STEP = .01;
+const STEP = .02;
 const NUM_STEPS = DEPTH_RANGE/STEP | 0;
 
 const FRAGMENT_SHADER = `#version 300 es
@@ -266,7 +266,7 @@ window.onload = () => {
   const segmentsz = 12;
   const segmentsy = 6;
   const ry = .9;
-  const rz = 4;
+  const rz = 2;
   const hole = rz;
 
   const sphere: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
@@ -337,8 +337,8 @@ window.onload = () => {
     // [shape5, [shape6]],
     // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, columns],
-    [roundedCube1, []],
-    //[sphere, []],
+    //[roundedCube1, []],
+    [sphere, []],
     //[sphere, [column]],
     //[disc, []],
     //[column, []],
@@ -744,7 +744,7 @@ window.onload = () => {
         const width = (maxX - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER * 2 | 0;
         const height = (maxY - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER * 2 | 0;
         
-        if (textureX + width > ctx.canvas.width) {
+        if (textureX + width > LINE_TEXTURE_DIMENSION) {
           textureX = 0;
           textureY += textureMaxHeight;
           textureMaxHeight = 0;
@@ -858,7 +858,8 @@ window.onload = () => {
           ctx.globalCompositeOperation = 'source-atop';
           ['red', '#FF0', '#FFF'].forEach((strokeStyle, i) => {
             ctx.strokeStyle = strokeStyle;
-            ctx.lineWidth = Math.pow(2, 2 - i);
+            //ctx.lineWidth = Math.pow(2, 2 - i);
+            ctx.lineWidth = 3 - i;
             ctx.stroke();  
           });
           ctx.restore();
@@ -942,9 +943,14 @@ window.onload = () => {
     gl.activeTexture(gl.TEXTURE0 + i);
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
+    // TODO need to mipmap geometry because we are scaling it so much
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    // NOT required (don't use mipmaps)
     //gl.generateMipmap(gl.TEXTURE_2D);
+    // materials needs a linear filter otherwise the gaps between resolutions
+    // causes holes in the material
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
   });
 
 
@@ -1079,7 +1085,8 @@ window.onload = () => {
     }
   };
   window.onwheel = (e: WheelEvent) => {
-    const positionMatrix = mat4.translate(mat4.create(), mat4.identity(mat4.create()), [0, 0, -e.deltaY/100]);
+    const v = e.deltaY/100;
+    const positionMatrix = mat4.translate(mat4.create(), mat4.identity(mat4.create()), [0, 0, -v]);
     mat4.multiply(modelPositionMatrix, positionMatrix, modelPositionMatrix);
   };
   window.onkeydown = (e: KeyboardEvent) => {
