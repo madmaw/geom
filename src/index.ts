@@ -80,7 +80,7 @@ const VERTEX_SHADER = `#version 300 es
   }
 `;
 
-const STEP = .005;
+const STEP = .01;
 const NUM_STEPS = DEPTH_RANGE/STEP | 0;
 
 const FRAGMENT_SHADER = `#version 300 es
@@ -114,54 +114,53 @@ const FRAGMENT_SHADER = `#version 300 es
 
     float depth = ${DEPTH_RANGE/2};
     vec4 tm;
-    int count = 0;
     vec4 p;
     vec4 tl;
-    while (count < ${NUM_STEPS}) {
+    for (int count = 0; count < ${NUM_STEPS}; count++) {
       depth -= ${STEP};
       p = ${V_PLANE_POSITION} + d * depth / c;
-      vec4 tm1 = texture(${U_MATERIAL_TEXTURE}, p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw);
+      vec4 tm1 = texture(
+        ${U_MATERIAL_TEXTURE},
+        p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
+      );
       float surfaceDepth = (tm1.z - .5) * ${DEPTH_RANGE} * depthScale;
       if (surfaceDepth > depth) {
         float d0 = depth + ${STEP};
         float s0 = d0 - (tm.z - .5) * ${DEPTH_RANGE} * depthScale;
         float s1 = d0 - surfaceDepth;
         //float w = ${STEP} * s/c;
-        float divisor = (${STEP} - s1 + s0);
+        float divisor = ${STEP} - s1 + s0;
         // make sure it's not almost parallel, if it is, defer until next iteration
         if (abs(divisor) > .0) {
           float si = s0 * ${STEP}/divisor;
-          //float si = s1;
-          //float si = s0;
-          //float si = -${STEP};
           depth += ${STEP} - si;
-          p = ${V_PLANE_POSITION} + d * (d0 - si) / c;
-          count = ${NUM_STEPS};  
+          p = ${V_PLANE_POSITION} + d * (d0 - si) / c;  
         }
-      } else {
-        tm = tm1;
+        count = ${NUM_STEPS};
       }
+      tm = tm1;
       tl = texture(
         ${U_LINE_TEXTURE},
         ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_SCALE/LINE_TEXTURE_DIMENSION}
       );
-      count++;
       if (tl.a < .5 && depth < 0.) {
         count = ${NUM_STEPS};
       }
     }
-
-    tm = texture(${U_MATERIAL_TEXTURE}, p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw);
+    // todo can move up to replace tm = tm1
+    tm = texture(
+      ${U_MATERIAL_TEXTURE},
+      p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
+    );
     vec2 n = tm.xy * 2. - 1.;
     vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
     vec4 color = mix(${U_MATERIAL_COLOR_2}, ${U_MATERIAL_COLOR_1}, abs(tm.a * 2. - 1.));
     ${O_COLOR} = vec4(
       mix(
         color.rgb * pow(max(0., (dot(m, normalize(vec3(1, 2, 3)))+1.)/2.), color.a * 2.),
-        //vec3((p.xyz + 1.)/2.),
         //tm.xyz,
         //(p.xyz + 1.)/2.,
-        //vec3(depth + .5, 0., c > 0. ? 1. : 0.),
+        //vec3(depth + .5),
         //vec3(count/${NUM_STEPS}),
         //mix(${U_LINE_COLOR}.rgb, ${U_MATERIAL_COLOR_1}.rgb, min(1., abs(depth) * 9.)),
         ${U_LINE_COLOR}.rgb,
@@ -944,9 +943,8 @@ window.onload = () => {
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-    //gl.texParameterf(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-    gl.generateMipmap(gl.TEXTURE_2D);
+    //gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   });
 
 
