@@ -28,7 +28,7 @@ export function featureMaterial(
     const z = imageData.data[2];
 
     for(let i=0; i<quantity; i++) {
-      const dimension = minDimension + dDimension * Math.random();
+      const dimension = minDimension + dDimension * Math.pow(Math.random(), 2);
       const r = dimension/2;
       const x = imageData.width * Math.random();
       const y = imageData.height * Math.random();

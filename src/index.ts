@@ -272,8 +272,8 @@ window.onload = () => {
   const roundedCube1 = round(round(cube, -1, false), -.8, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
-  const segmentsz = 6;
-  const segmentsy = 3;
+  const segmentsz = 8;
+  const segmentsy = 4;
   const ry = .3;
   const rz = 1;
   const hole = rz;
@@ -340,14 +340,14 @@ window.onload = () => {
   }).filter(v => v != null);
   
   const shapes: readonly Shape[] = ([
-    [cube, []],
+    //[cube, []],
     //[shape1, []],
     //[shape7, [shape6]],
     // [shape5, [shape6]],
     // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, columns],
     //[roundedCube1, []],
-    //[sphere, []],
+    [sphere, []],
     //[sphere, [column]],
     //[disc, []],
     //[column, []],
@@ -704,22 +704,22 @@ window.onload = () => {
     ],
     [
       createFlatMaterialFactory(128, .5),
-      featureMaterial(riverStonesFactory(.5), 39, 99, 999),
+      featureMaterial(riverStonesFactory(.6), 9, 49, 999),
       featureMaterial(staticFactory(40), 2, 2, 4999),
     ],
     [
       createFlatMaterialFactory(128, .5),
       featureMaterial(staticFactory(99), 1, 9, 4999),
-      featureMaterial(riverStonesFactory(1), 9, 99, 99),
+      featureMaterial(riverStonesFactory(1), 9, 99, 199),
     ],
     [
       createFlatMaterialFactory(128, 1),
-      featureMaterial(craterFeature(99), 9, 189, 49),
+      featureMaterial(craterFeature(99), 9, 99, 99),
       featureMaterial(staticFactory(40), 9, 99, 4999),
     ],
     [
       createFlatMaterialFactory(128, .5),
-      featureMaterial(spikeFeature(2, 1, 28), 29, 29, 999),
+      featureMaterial(spikeFeature(2, 1, 28), 29, 29, 99),
       featureMaterial(staticFactory(40), 9, 9, 1999),
     ],
   ];
