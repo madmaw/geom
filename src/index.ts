@@ -5,14 +5,14 @@ import { ReadonlyMat4, ReadonlyVec3, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 import { EPSILON, NORMAL_X, NORMAL_Z } from "./geometry/constants";
 import { Face, convexPolygonContainsPoint } from "./geometry/face";
-import { Material } from "./materials/material";
+import { Material, featureMaterial } from "./materials/material";
 import { riverStonesFactory } from "./materials/river_stones";
-import { cratersFactory } from "./materials/craters";
+import { craterFeature } from "./materials/craters";
 import { staticFactory } from "./materials/static";
 import { round } from "./geometry/round";
 import { createFlatMaterialFactory } from "./materials/flat";
 import { DEPTH_RANGE } from "./constants";
-import { spikesFactory } from "./materials/spikes";
+import { spikeFeature } from "./materials/spikes";
 
 type MaybeInvertedFace = Face & {
   inverted: number,
@@ -23,7 +23,7 @@ type MaybeInvertedFace = Face & {
 //const LINE_TEXTURE_SCALE = 80;
 const LINE_TEXTURE_PROPORTION = 64/4096;
 //const LINE_TEXTURE_BUFFER = LINE_TEXTURE_SCALE/2;
-const BORDER_EXPAND = .02;
+const BORDER_EXPAND = .05;
 //const MATERIAL_TEXTURE_DIMENSION = 4096;
 const MATERIAL_TEXTURE_DIMENSION = 2048;
 const MATERIAL_DEPTH_SCALE = 256/(MATERIAL_TEXTURE_DIMENSION * DEPTH_RANGE);
@@ -272,7 +272,7 @@ window.onload = () => {
   const roundedCube1 = round(round(cube, -1, false), -.8, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
-  const segmentsz = 10;
+  const segmentsz = 6;
   const segmentsy = 3;
   const ry = .3;
   const rz = 1;
@@ -340,7 +340,7 @@ window.onload = () => {
   }).filter(v => v != null);
   
   const shapes: readonly Shape[] = ([
-    //[cube, []],
+    [cube, []],
     //[shape1, []],
     //[shape7, [shape6]],
     // [shape5, [shape6]],
@@ -349,7 +349,7 @@ window.onload = () => {
     //[roundedCube1, []],
     //[sphere, []],
     //[sphere, [column]],
-    [disc, []],
+    //[disc, []],
     //[column, []],
     //[columns[0], []],
     //...columns.map<Shape>(column => [column, []]),
@@ -695,12 +695,33 @@ window.onload = () => {
 
   // add in some textures
   const materials: Material[][] = [
-    [createFlatMaterialFactory(127, 1)],
-    [createFlatMaterialFactory(128, .7), staticFactory(9, 39, 99, 4999)],
-    [createFlatMaterialFactory(128, .5), riverStonesFactory(9, 9, 13, 2999), staticFactory(6, 9, 40, 4999)],
-    [createFlatMaterialFactory(128, .5), staticFactory(1, 9, 99, 4999), riverStonesFactory(9, 9, 99, 999)],
-    [createFlatMaterialFactory(128, 1), cratersFactory(9, 49, 99), staticFactory(9, 99, 40, 4999)],
-    [createFlatMaterialFactory(128, .5), spikesFactory(9, 9, 9, 30, 999), staticFactory(9, 9, 40, 1999)],
+    [
+      createFlatMaterialFactory(127, 1),
+    ],
+    [
+      createFlatMaterialFactory(128, .7), 
+      featureMaterial(staticFactory(99), 9, 39, 4999),
+    ],
+    [
+      createFlatMaterialFactory(128, .5),
+      featureMaterial(riverStonesFactory(.5), 39, 99, 999),
+      featureMaterial(staticFactory(40), 2, 2, 4999),
+    ],
+    [
+      createFlatMaterialFactory(128, .5),
+      featureMaterial(staticFactory(99), 1, 9, 4999),
+      featureMaterial(riverStonesFactory(1), 9, 99, 99),
+    ],
+    [
+      createFlatMaterialFactory(128, 1),
+      featureMaterial(craterFeature(99), 9, 189, 49),
+      featureMaterial(staticFactory(40), 9, 99, 4999),
+    ],
+    [
+      createFlatMaterialFactory(128, .5),
+      featureMaterial(spikeFeature(2, 1, 28), 29, 29, 999),
+      featureMaterial(staticFactory(40), 9, 9, 1999),
+    ],
   ];
   const materialCanvases = materials.map((materials, i) => {
     const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
