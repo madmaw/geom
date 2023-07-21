@@ -3,7 +3,7 @@ import { Plane, toPlane } from "./geometry/plane";
 import { decompose } from "./geometry/decompose";
 import { ReadonlyMat4, ReadonlyVec3, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
-import { EPSILON, NORMAL_Z } from "./geometry/constants";
+import { EPSILON, NORMAL_X, NORMAL_Z } from "./geometry/constants";
 import { Face, convexPolygonContainsPoint } from "./geometry/face";
 import { Material } from "./materials/material";
 import { riverStonesFactory } from "./materials/river_stones";
@@ -12,6 +12,7 @@ import { staticFactory } from "./materials/static";
 import { round } from "./geometry/round";
 import { createFlatMaterialFactory } from "./materials/flat";
 import { DEPTH_RANGE } from "./constants";
+import { spikesFactory } from "./materials/spikes";
 
 type MaybeInvertedFace = Face & {
   inverted: number,
@@ -21,7 +22,7 @@ const LINE_TEXTURE_DIMENSION = 4096;
 //const LINE_TEXTURE_DIMENSION = 512;
 const LINE_TEXTURE_SCALE = 48;
 const LINE_TEXTURE_BUFFER = 24;
-const BORDER_EXPAND = .1;
+const BORDER_EXPAND = .02;
 const MATERIAL_TEXTURE_DIMENSION = 4096;
 //const MATERIAL_TEXTURE_DIMENSION = 1024;
 const MATERIAL_DEPTH_SCALE = 256/(MATERIAL_TEXTURE_DIMENSION * DEPTH_RANGE);
@@ -270,10 +271,10 @@ window.onload = () => {
   const roundedCube1 = round(round(cube, -1, false), -.8, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
-  const segmentsz = 12;
-  const segmentsy = 6;
-  const ry = .9;
-  const rz = 2;
+  const segmentsz = 10;
+  const segmentsy = 5;
+  const ry = .6;
+  const rz = 1;
   const hole = rz;
 
   const sphere: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
@@ -691,6 +692,7 @@ window.onload = () => {
     [createFlatMaterialFactory(128, .5), riverStonesFactory(9, 49, 39, 3999), staticFactory(6, 9, 40, 9999)],
     [createFlatMaterialFactory(128, .5), staticFactory(1, 9, 99, 9999), riverStonesFactory(9, 39, 999, 999)],
     [createFlatMaterialFactory(128, 1), cratersFactory(9, 99, 99), staticFactory(9, 99, 40, 9999)],
+    [createFlatMaterialFactory(128, .5), spikesFactory(9, 20, 9, 50, 2999), staticFactory(9, 9, 40, 9999)],
   ];
   const materialCanvases = materials.map((materials, i) => {
     const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
@@ -723,7 +725,13 @@ window.onload = () => {
   //ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
   //ctx.fillStyle = '#000';
 
-  const [worldPoints, planePoints, normalTransforms, lineTextureOffsets, indices] = faces.reduce<[
+  const [
+    worldPoints,
+    planePoints,
+    normalTransforms,
+    lineTextureOffsets,
+    indices,
+  ] = faces.reduce<[
     // world position points
     [number, number, number][],
     // plane position points
@@ -900,7 +908,7 @@ window.onload = () => {
         return inverted ? [0, 0] : [x, y];
       });
 
-      const newNormalTransforms = uniquePoints.map(() => {
+      const newNormalTransforms = uniquePoints.map(worldPoint => {
         // const normals = pointNormals.get(worldPoint);
         // const normal = normals.reduce<vec3>((acc, normal) => {
         //   return vec3.add(
@@ -922,6 +930,13 @@ window.onload = () => {
         //     ),
         //   );
         // }, [0, 0, 0]);
+        // const cosAngle = vec3.dot(normal, NORMAL_Z);
+        // const angle = Math.acos(cosAngle);
+        // const axis = Math.abs(cosAngle) > 1 - EPSILON
+        //   ? NORMAL_X
+        //   : vec3.normalize(vec3.create(), vec3.cross(vec3.create(), normal, NORMAL_Z));
+        // const rotation = mat4.rotate(mat4.create(), mat4.identity(mat4.create()), angle, axis);
+        // return [...rotation] as any;
         // return [...vec3.normalize(normal, normal)] as [number, number, number];
 
         return [...rotateToWorldCoordinates] as any;
@@ -1119,8 +1134,8 @@ window.onload = () => {
   window.onkeydown = (e: KeyboardEvent) => {
     switch (e.key) {
       case 'Enter':
-        material = (material%materials.length) + 2;
-        gl.uniform1i(uMaterialTexture, material);
+        material = (material + 1)%materials.length;
+        gl.uniform1i(uMaterialTexture, material + 2);
         break;
       case 'ArrowLeft':
         cameraX-=.1;
