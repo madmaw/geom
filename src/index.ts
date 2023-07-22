@@ -126,8 +126,12 @@ const FRAGMENT_SHADER = `#version 300 es
         ${U_MATERIAL_TEXTURE},
         p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
       );
+      tb = texture(
+        ${U_BOUNDARY_TEXTURE},
+        ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_PROPORTION}
+      );  
       float surfaceDepth = (tm1.z - .5) * ${DEPTH_RANGE} * depthScale;
-      if (surfaceDepth > depth) {
+      if (surfaceDepth > depth && tb.a > .5) {
         float d0 = depth + ${STEP};
         float s0 = d0 - (tm.z - .5) * ${DEPTH_RANGE} * depthScale;
         float s1 = d0 - surfaceDepth;
@@ -141,7 +145,10 @@ const FRAGMENT_SHADER = `#version 300 es
         }
         count = ${NUM_STEPS};
       }
-      tm = tm1;
+      tm = texture(
+        ${U_MATERIAL_TEXTURE},
+        p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
+      );
       tb = texture(
         ${U_BOUNDARY_TEXTURE},
         ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_PROPORTION}
@@ -155,11 +162,6 @@ const FRAGMENT_SHADER = `#version 300 es
       ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_PROPORTION}
     );
 
-    // todo can move up to replace tm = tm1
-    tm = texture(
-      ${U_MATERIAL_TEXTURE},
-      p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
-    );
     vec2 n = tm.xy * 2. - 1.;
     vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
     vec4 color = mix(${U_MATERIAL_COLOR_2}, ${U_MATERIAL_COLOR_1}, abs(tm.a * 2. - 1.));
@@ -168,13 +170,13 @@ const FRAGMENT_SHADER = `#version 300 es
         color.rgb * pow(max(0., (dot(m, normalize(vec3(1, 2, 3)))+1.)/2.), color.a * 2.),
         //tm.xyz,
         //(p.xyz + 1.)/2.,
-        //vec3(depth + .5),
+        //vec3(depth + .5) * 2.,
         //vec3(count/${NUM_STEPS}),
         //mix(${U_LINE_COLOR}.rgb, ${U_MATERIAL_COLOR_1}.rgb, min(1., abs(depth) * 9.)),
         ${U_LINE_COLOR}.rgb,
         //tl.xyz,
         //0.
-        max(length(tl.rgb * ${U_LINE_WIDTH}.xyz), 1. - tb.a)
+        max(length(tl.rgb * ${U_LINE_WIDTH}.xyz), (1. - tb.a)) * pow(1. - min(1., abs(depth * ${2/DEPTH_RANGE}.)), 4.)
       ),
       1
     );
@@ -711,7 +713,7 @@ window.onload = () => {
     ],
     [
       createFlatMaterialFactory(128, .5),
-      featureMaterial(riverStonesFactory(.6), 60, 999, randomDistributionFactory(.9, 2)),
+      featureMaterial(riverStonesFactory(.6), 60, 2999, randomDistributionFactory(.9, 2)),
       featureMaterial(staticFactory(40), 4, 4999, randomDistributionFactory(.5, 1)),
     ],
     [
