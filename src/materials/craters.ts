@@ -16,7 +16,7 @@ export function craterFeature(maxDepth: number): FeatureFactory {
             (nx + 1) * 127 | 0,
             (ny + 1) * 127 | 0,
             depthValue | 0,
-            255 - Math.pow(Math.min(1, depth/maxDepth), 2) * 127 | 0
+            Math.abs(v[3] - Math.pow(Math.min(1, depth/maxDepth), 2) * 127 - 127) + 127 | 0
           ];
         }
       }

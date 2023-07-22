@@ -5,13 +5,13 @@ import { ReadonlyMat4, ReadonlyVec3, mat4, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 import { EPSILON, NORMAL_X, NORMAL_Z } from "./geometry/constants";
 import { Face, convexPolygonContainsPoint } from "./geometry/face";
-import { Material, featureMaterial } from "./materials/material";
+import { Material, clusteredDistributionFactory, featureMaterial, randomDistributionFactory } from "./materials/material";
 import { riverStonesFactory } from "./materials/river_stones";
 import { craterFeature } from "./materials/craters";
 import { staticFactory } from "./materials/static";
 import { round } from "./geometry/round";
 import { createFlatMaterialFactory } from "./materials/flat";
-import { DEPTH_RANGE } from "./constants";
+import { DEPTH_RANGE, MATERIAL_TEXTURE_DIMENSION } from "./constants";
 import { spikeFeature } from "./materials/spikes";
 
 type MaybeInvertedFace = Face & {
@@ -25,7 +25,6 @@ const LINE_TEXTURE_PROPORTION = 64/4096;
 //const LINE_TEXTURE_BUFFER = LINE_TEXTURE_SCALE/2;
 const BORDER_EXPAND = .05;
 //const MATERIAL_TEXTURE_DIMENSION = 4096;
-const MATERIAL_TEXTURE_DIMENSION = 2048;
 const MATERIAL_DEPTH_SCALE = 256/(MATERIAL_TEXTURE_DIMENSION * DEPTH_RANGE);
 
 const A_VERTEX_WORLD_POSITION = "aVertexWorldPosition";
@@ -272,10 +271,10 @@ window.onload = () => {
   const roundedCube1 = round(round(cube, -1, false), -.8, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
-  const segmentsz = 8;
-  const segmentsy = 4;
+  const segmentsz = 16;
+  const segmentsy = 8;
   const ry = .3;
-  const rz = 1;
+  const rz = 2;
   const hole = rz;
 
   const sphere: ConvexShape = new Array(segmentsz).fill(0).map((_, i, arrz) => {
@@ -415,8 +414,9 @@ window.onload = () => {
     alpha: false,
   });
 
-  //const lineTextureDimension: number = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), 8192);
-  const lineTextureDimension: number = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+  // get context loss if the textures are too big
+  const lineTextureDimension: number = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), 8192);
+  //const lineTextureDimension: number = gl.getParameter(gl.MAX_TEXTURE_SIZE);
   //const lineTextureDimension = 2048;
   const lineTextureScale = lineTextureDimension * LINE_TEXTURE_PROPORTION;
   const lineTextureBuffer = lineTextureScale / 2;
@@ -700,27 +700,68 @@ window.onload = () => {
     ],
     [
       createFlatMaterialFactory(128, .7), 
-      featureMaterial(staticFactory(99), 9, 39, 4999),
+      featureMaterial(staticFactory(99), 50, 9999, clusteredDistributionFactory(
+        20,
+        50,
+        1,
+        5,
+        .8,
+        4
+      )),
     ],
     [
       createFlatMaterialFactory(128, .5),
-      featureMaterial(riverStonesFactory(.6), 9, 49, 999),
-      featureMaterial(staticFactory(40), 2, 2, 4999),
+      featureMaterial(riverStonesFactory(.6), 60, 999, randomDistributionFactory(.9, 2)),
+      featureMaterial(staticFactory(40), 4, 4999, randomDistributionFactory(.5, 1)),
     ],
     [
       createFlatMaterialFactory(128, .5),
-      featureMaterial(staticFactory(99), 1, 9, 4999),
-      featureMaterial(riverStonesFactory(1), 9, 99, 199),
+      featureMaterial(staticFactory(99), 9, 4999, randomDistributionFactory(.9, 1)),
+      featureMaterial(riverStonesFactory(1), 99, 199, randomDistributionFactory(.9, 2)),
     ],
     [
       createFlatMaterialFactory(128, 1),
-      featureMaterial(craterFeature(99), 9, 99, 99),
-      featureMaterial(staticFactory(40), 9, 99, 4999),
+      featureMaterial(staticFactory(40), 99, 4999, randomDistributionFactory(.9, 2)),
+      featureMaterial(craterFeature(59), 99, 999, clusteredDistributionFactory(
+        99,
+        99,
+        0,
+        9,
+        1, 
+        3,
+      )),
     ],
     [
       createFlatMaterialFactory(128, .5),
-      featureMaterial(spikeFeature(2, 1, 28), 29, 29, 99),
-      featureMaterial(staticFactory(40), 9, 9, 1999),
+      featureMaterial(spikeFeature(2, 1, 99), 60, 999, clusteredDistributionFactory(
+        9,
+        99,
+        1,
+        0,
+        .3, 
+        9,
+      )),
+      featureMaterial(staticFactory(40), 9, 1999, randomDistributionFactory(.5, 1)),
+    ],
+    [
+      createFlatMaterialFactory(128, .5),
+      featureMaterial(spikeFeature(2, 1, 99), 60, 499, clusteredDistributionFactory(
+        9,
+        99,
+        1,
+        0,
+        .3, 
+        9,
+      )),
+      featureMaterial(staticFactory(40), 9, 1999, randomDistributionFactory(.5, 1)),
+      featureMaterial(craterFeature(59), 99, 999, clusteredDistributionFactory(
+        99,
+        199,
+        0,
+        9,
+        1, 
+        3,
+      )),
     ],
   ];
   const materialCanvases = materials.map((materials, i) => {
@@ -1200,12 +1241,12 @@ window.onload = () => {
         setLineWidth();
         break;
       case 'w':
-        materialScale*=2;
+        materialScale*=1.5;
         setLineWidth();
         console.log('material scale', materialScale);
         break;
       case 'q':
-        materialScale/=2;
+        materialScale/=1.5;
         setLineWidth();
         console.log('material scale', materialScale);
         break;
@@ -1237,7 +1278,7 @@ window.onload = () => {
   //gl.uniform4f(uLineColor, .8, .9, 1, 1);
   gl.uniform4f(uLineColor, 0, 1, 1, 1);
   gl.uniform1i(uMaterialTexture, material);
-  gl.uniform4f(uMaterialColor1, 0, 0, 0, 0);
+  gl.uniform4f(uMaterialColor1, .4, .4, .5, .5);
   gl.uniform4f(uMaterialColor2, .2, .2, .4, .5);
   setLineWidth();
   setCameraPosition();
