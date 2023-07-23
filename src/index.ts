@@ -176,7 +176,7 @@ const FRAGMENT_SHADER = `#version 300 es
         ${U_LINE_COLOR}.rgb,
         //tl.xyz,
         //0.
-        max(length(tl.rgb * ${U_LINE_WIDTH}.xyz), (1. - tb.a)) * pow(1. - min(1., abs(depth * ${2/DEPTH_RANGE}.)), 4.)
+        length(${U_LINE_WIDTH}.xyz) * max(length(tl.rgb * ${U_LINE_WIDTH}.xyz), (1. - tb.a)) * pow(1. - min(1., abs(depth * ${2/DEPTH_RANGE}.)), 4.)
       ),
       1
     );
