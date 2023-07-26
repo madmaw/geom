@@ -1,7 +1,7 @@
 import { ConvexShape, Shape, convexShapeContainPoint, convexShapeExpand } from "./geometry/shape";
 import { Plane, toPlane } from "./geometry/plane";
 import { decompose } from "./geometry/decompose";
-import { ReadonlyMat4, ReadonlyVec3, mat4, vec3 } from "gl-matrix";
+import { ReadonlyMat4, ReadonlyVec2, ReadonlyVec3, mat4, vec2, vec3 } from "gl-matrix";
 import { loadShader } from "./util/webgl";
 import { EPSILON, NORMAL_X, NORMAL_Z } from "./geometry/constants";
 import { Face, convexPolygonContainsPoint } from "./geometry/face";
@@ -10,22 +10,24 @@ import { riverStonesFactory } from "./materials/river_stones";
 import { craterFeature } from "./materials/craters";
 import { staticFactory } from "./materials/static";
 import { round } from "./geometry/round";
-import { createFlatMaterialFactory } from "./materials/flat";
-import { DEPTH_RANGE, MATERIAL_TEXTURE_DIMENSION } from "./constants";
+import { DEPTH_RANGE, MATERIAL_TEXTURE_DIMENSION, THREE_WAY_NORMALS } from "./constants";
 import { spikeFeature } from "./materials/spikes";
+import { Line, closestLinePointVector, lineDeltaAndLength, lineIntersection, lineIntersectsPoints, toLine } from "./geometry/line";
 
 type MaybeInvertedFace = Face & {
   inverted: number,
 };
 
-//const LINE_TEXTURE_DIMENSION = 4096;
-//const LINE_TEXTURE_DIMENSION = 512;
+const LINE_TEXTURE_DIMENSION = 4096;
+//const LINE_TEXTURE_DIMENSION = 1024;
 //const LINE_TEXTURE_SCALE = 80;
-const LINE_TEXTURE_PROPORTION = 64/4096;
+//const c = 64/4096;
+const LINE_TEXTURE_PROPORTION = 48/LINE_TEXTURE_DIMENSION;
 //const LINE_TEXTURE_BUFFER = LINE_TEXTURE_SCALE/2;
 const BORDER_EXPAND = .05;
 //const MATERIAL_TEXTURE_DIMENSION = 4096;
 const MATERIAL_DEPTH_SCALE = 256/(MATERIAL_TEXTURE_DIMENSION * DEPTH_RANGE);
+const MATERIAL_OFFSET_SCALE = 256/MATERIAL_TEXTURE_DIMENSION;
 
 const A_VERTEX_WORLD_POSITION = "aVertexWorldPosition";
 const A_VERTEX_PLANE_POSITION = 'aVertexPlanePosition';
@@ -38,10 +40,11 @@ const U_PROJECTION_MATRIX = "uProjection";
 const U_LINE_TEXTURE = 'uLine';
 const U_LINE_COLOR = 'uLineColor';
 const U_LINE_WIDTH = 'uLineWidth';
-const U_BOUNDARY_TEXTURE = 'uBoundary';
 const U_MATERIAL_TEXTURE = 'uMaterial';
-const U_MATERIAL_COLOR_1 = 'uMaterialColor1';
-const U_MATERIAL_COLOR_2 = 'uMaterialColor2';
+const U_MATERIAL_DISTANCE_TEXTURE = 'uMaterialDistance';
+const U_MATERIAL_COLOR_BASE = 'uMaterialColorBase';
+const U_MATERIAL_COLOR_FEATURE = 'uMaterialColorFeature';
+const U_MATERIAL_COLOR_SURFACE = 'uMaterialColorSurface';
 const U_CAMERA_POSITION = 'uCameraPosition';
 
 const V_PLANE_POSITION = 'vPlanePosition';
@@ -97,10 +100,11 @@ const FRAGMENT_SHADER = `#version 300 es
   uniform sampler2D ${U_LINE_TEXTURE};
   uniform vec4 ${U_LINE_COLOR};
   uniform vec4 ${U_LINE_WIDTH};
-  uniform sampler2D ${U_BOUNDARY_TEXTURE};
   uniform sampler2D ${U_MATERIAL_TEXTURE};
-  uniform vec4 ${U_MATERIAL_COLOR_1};
-  uniform vec4 ${U_MATERIAL_COLOR_2};
+  uniform sampler2D ${U_MATERIAL_DISTANCE_TEXTURE};
+  uniform vec4 ${U_MATERIAL_COLOR_BASE};
+  uniform vec4 ${U_MATERIAL_COLOR_FEATURE};
+  uniform vec4 ${U_MATERIAL_COLOR_SURFACE};
   uniform mat4 ${U_MODEL_ROTATION_MATRIX};
   uniform vec3 ${U_CAMERA_POSITION};
   out vec4 ${O_COLOR};
@@ -116,55 +120,74 @@ const FRAGMENT_SHADER = `#version 300 es
     float depthScale = ${MATERIAL_DEPTH_SCALE}/${U_LINE_WIDTH}.w;
 
     float depth = ${DEPTH_RANGE/2};
+    // material
     vec4 tm;
+    // distances
+    vec4 td;
     vec4 p;
-    vec4 tb;
+    vec4 tl;
     for (int count = 0; count < ${NUM_STEPS}; count++) {
       depth -= ${STEP};
       p = ${V_PLANE_POSITION} + d * depth / c;
-      vec4 tm1 = texture(
+      tl = texture(
+        ${U_LINE_TEXTURE},
+        ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_PROPORTION}
+      );  
+      td = texture(
+        ${U_MATERIAL_DISTANCE_TEXTURE},
+        p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
+      );
+      vec2 cp = p.xy - (td.xy - .5) * ${MATERIAL_OFFSET_SCALE}/${U_LINE_WIDTH}.w;
+      float r = td.z * ${MATERIAL_OFFSET_SCALE}/${U_LINE_WIDTH}.w;
+      vec4 tc = texture(
+        ${U_LINE_TEXTURE},
+        ${V_LINE_TEXTURE_COORD} + cp * ${LINE_TEXTURE_PROPORTION}
+      );
+      vec4 tm1 = tc.r < r ? vec4(.5) : texture(
         ${U_MATERIAL_TEXTURE},
         p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
       );
-      tb = texture(
-        ${U_BOUNDARY_TEXTURE},
-        ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_PROPORTION}
-      );  
-      float surfaceDepth = (tm1.z - .5) * ${DEPTH_RANGE} * depthScale;
-      if (surfaceDepth > depth && tb.a > .5) {
+
+      float surfaceDepth = (tm1.z - .5) * ${DEPTH_RANGE} * depthScale; 
+      if (surfaceDepth > depth && tl.a > .5) {
         float d0 = depth + ${STEP};
         float s0 = d0 - (tm.z - .5) * ${DEPTH_RANGE} * depthScale;
         float s1 = d0 - surfaceDepth;
         //float w = ${STEP} * s/c;
         float divisor = ${STEP} - s1 + s0;
         // make sure it's not almost parallel, if it is, defer until next iteration
-        if (abs(divisor) > .0) {
+        if (abs(divisor) > .0) {  
           float si = s0 * ${STEP}/divisor;
           depth += ${STEP} - si;
           p = ${V_PLANE_POSITION} + d * (d0 - si) / c;  
         }
         count = ${NUM_STEPS};
       }
-      tm = texture(
+      // TODO do we need to update tc with the new p?
+      tm = tc.r < r ? vec4(.5) : texture(
         ${U_MATERIAL_TEXTURE},
         p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
-      );
-      tb = texture(
-        ${U_BOUNDARY_TEXTURE},
-        ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_PROPORTION}
       );  
-      if (tb.a < .5 && depth < 0.) {
+      tl = texture(
+        ${U_LINE_TEXTURE},
+        ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_PROPORTION}
+      );
+      // if (tc.r < r) {
+      //   count = ${NUM_STEPS};
+      //   //tm = tc;
+      //   tm = vec4(.5);
+      // }
+
+      if (tl.a < .5 && depth < 0.) {
         count = ${NUM_STEPS};
       }
     }
-    vec4 tl = texture(
-      ${U_LINE_TEXTURE},
-      ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_PROPORTION}
-    );
 
     vec2 n = tm.xy * 2. - 1.;
     vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
-    vec4 color = mix(${U_MATERIAL_COLOR_2}, ${U_MATERIAL_COLOR_1}, abs(tm.a * 2. - 1.));
+    vec4 color = ${U_MATERIAL_COLOR_BASE}
+      + ${U_MATERIAL_COLOR_FEATURE} * (tm.a * 2. - 1.)
+      + ${U_MATERIAL_COLOR_SURFACE} * (td.a * 2. - 1.);
     ${O_COLOR} = vec4(
       mix(
         color.rgb * pow(max(0., (dot(m, normalize(vec3(1, 2, 3)))+1.)/2.), color.a * 2.),
@@ -172,11 +195,11 @@ const FRAGMENT_SHADER = `#version 300 es
         //(p.xyz + 1.)/2.,
         //vec3(depth + .5) * 2.,
         //vec3(count/${NUM_STEPS}),
-        //mix(${U_LINE_COLOR}.rgb, ${U_MATERIAL_COLOR_1}.rgb, min(1., abs(depth) * 9.)),
         ${U_LINE_COLOR}.rgb,
         //tl.xyz,
         //0.
-        length(${U_LINE_WIDTH}.xyz) * max(length(tl.rgb * ${U_LINE_WIDTH}.xyz), (1. - tb.a)) * pow(1. - min(1., abs(depth * ${2/DEPTH_RANGE}.)), 4.)
+        pow(1. - tl.r, 40.)
+        //length(${U_LINE_WIDTH}.xyz) * max(length(tl.rgb * ${U_LINE_WIDTH}.xyz), (1. - tl.a)) * pow(1. - min(1., abs(depth * ${2/DEPTH_RANGE}.)), 4.)
       ),
       1
     );
@@ -273,8 +296,8 @@ window.onload = () => {
   const roundedCube1 = round(round(cube, -1, false), -.8, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
-  const segmentsz = 16;
-  const segmentsy = 8;
+  const segmentsz = 8;
+  const segmentsy = 2;
   const ry = .3;
   const rz = 2;
   const hole = rz;
@@ -346,11 +369,11 @@ window.onload = () => {
     //[shape7, [shape6]],
     // [shape5, [shape6]],
     // [shape1, [shape2, shape3, shape4, shape6]],
-    //[disc, columns],
-    //[roundedCube1, []],
-    [sphere, []],
-    //[sphere, [column]],
     //[disc, []],
+    //[disc, columns],
+    [roundedCube1, []],
+    //[sphere, []],
+    //[sphere, [column]],
     //[column, []],
     //[columns[0], []],
     //...columns.map<Shape>(column => [column, []]),
@@ -417,9 +440,9 @@ window.onload = () => {
   });
 
   // get context loss if the textures are too big
-  const lineTextureDimension: number = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), 8192);
+  //const lineTextureDimension: number = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), 8192);
   //const lineTextureDimension: number = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-  //const lineTextureDimension = 2048;
+  const lineTextureDimension = LINE_TEXTURE_DIMENSION;
   const lineTextureScale = lineTextureDimension * LINE_TEXTURE_PROPORTION;
   const lineTextureBuffer = lineTextureScale / 2;
   const baseLineWidth = lineTextureDimension/4096;
@@ -477,10 +500,11 @@ window.onload = () => {
     uLineTexture,
     uLineColor,
     uLineWidth,
-    uBoundaryTexture,
     uMaterialTexture,
-    uMaterialColor1,
-    uMaterialColor2,
+    uMaterialDistanceTexture,
+    uMaterialColorBase,
+    uMaterialColorFeature,
+    uMaterialColorSurface,
   ] = [
     U_MODEL_VIEW_MATRIX,
     U_MODEL_ROTATION_MATRIX,
@@ -489,10 +513,11 @@ window.onload = () => {
     U_LINE_TEXTURE,
     U_LINE_COLOR,
     U_LINE_WIDTH,
-    U_BOUNDARY_TEXTURE,
     U_MATERIAL_TEXTURE,
-    U_MATERIAL_COLOR_1,
-    U_MATERIAL_COLOR_2,
+    U_MATERIAL_DISTANCE_TEXTURE,
+    U_MATERIAL_COLOR_BASE,
+    U_MATERIAL_COLOR_FEATURE,
+    U_MATERIAL_COLOR_SURFACE,
   ].map(
     uniform => gl.getUniformLocation(program, uniform)
   );
@@ -697,11 +722,8 @@ window.onload = () => {
 
   // add in some textures
   const materials: Material[][] = [
+    [],
     [
-      createFlatMaterialFactory(127, 1),
-    ],
-    [
-      createFlatMaterialFactory(128, .7), 
       featureMaterial(staticFactory(99), 50, 9999, clusteredDistributionFactory(
         20,
         50,
@@ -712,17 +734,14 @@ window.onload = () => {
       )),
     ],
     [
-      createFlatMaterialFactory(128, .5),
       featureMaterial(riverStonesFactory(.6), 60, 2999, randomDistributionFactory(.9, 2)),
       featureMaterial(staticFactory(40), 4, 4999, randomDistributionFactory(.5, 1)),
     ],
     [
-      createFlatMaterialFactory(128, .5),
       featureMaterial(staticFactory(99), 9, 4999, randomDistributionFactory(.9, 1)),
       featureMaterial(riverStonesFactory(1), 99, 199, randomDistributionFactory(.9, 2)),
     ],
     [
-      createFlatMaterialFactory(128, 1),
       featureMaterial(staticFactory(40), 99, 4999, randomDistributionFactory(.9, 2)),
       featureMaterial(craterFeature(59), 99, 999, clusteredDistributionFactory(
         99,
@@ -734,7 +753,6 @@ window.onload = () => {
       )),
     ],
     [
-      createFlatMaterialFactory(128, .5),
       featureMaterial(spikeFeature(2, 1, 99), 60, 999, clusteredDistributionFactory(
         9,
         99,
@@ -746,7 +764,6 @@ window.onload = () => {
       featureMaterial(staticFactory(40), 9, 1999, randomDistributionFactory(.5, 1)),
     ],
     [
-      createFlatMaterialFactory(128, .5),
       featureMaterial(spikeFeature(2, 1, 99), 60, 499, clusteredDistributionFactory(
         9,
         99,
@@ -767,12 +784,28 @@ window.onload = () => {
     ],
   ];
   const materialCanvases = materials.map((materials, i) => {
-    const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement;
+    const materialCanvas = document.getElementById('canvasMaterial'+i) as HTMLCanvasElement || document.createElement('canvas');
     materialCanvas.width = MATERIAL_TEXTURE_DIMENSION;
-    materialCanvas.height = MATERIAL_TEXTURE_DIMENSION;
-    const ctx = materialCanvas.getContext('2d');
-    materials.forEach(material => material(ctx));
-    return [materialCanvas];
+    materialCanvas.height = MATERIAL_TEXTURE_DIMENSION; 
+    const ctx = materialCanvas.getContext('2d', {
+      willReadFrequently: true,
+    });
+    // nx = 0, ny = 0, depth = 0, feature color = 0
+    ctx.fillStyle = 'rgba(127,127,127,.5)';
+    ctx.fillRect(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
+
+    const materialCanvas2 = document.getElementById('canvasDistance'+i) as HTMLCanvasElement || document.createElement('canvas');
+    materialCanvas2.width = MATERIAL_TEXTURE_DIMENSION;
+    materialCanvas2.height = MATERIAL_TEXTURE_DIMENSION; 
+    const ctx2 = materialCanvas2.getContext('2d', {
+      willReadFrequently: true,
+    });
+    // dx = 0, dy = 0, r = 0, surface color = 0
+    ctx2.fillStyle = 'rgba(127,127,0,.5)';
+    ctx2.fillRect(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
+
+    materials.forEach(material => material(ctx, ctx2));
+    return [materialCanvas, materialCanvas2];
   });
 
   // want a space so we can have transparent area to map inverted shapes to
@@ -781,7 +814,7 @@ window.onload = () => {
   let textureMaxHeight = lineTextureScale * 4;
   //ctx.lineCap = 'round';
 
-  const geometryLineCanvases = new Array(6).fill(0).map((_, level) => {
+  const geometryLineCanvases = new Array(1).fill(0).map((_, level) => {
     const canvas = level ? document.createElement('canvas') : document.getElementById("canvasLines") as HTMLCanvasElement;
     const dimension = Math.pow(lineTextureDimension, 1/(level+1));
     canvas.width = dimension;
@@ -854,7 +887,9 @@ window.onload = () => {
         // }
         geometryLineCanvases.forEach((geometryLineCanvas, i) => {
           const divisor = Math.pow(2, i);
-          const ctx = geometryLineCanvas.getContext('2d');
+          const ctx = geometryLineCanvas.getContext('2d', {
+            willReadFrequently: true,
+          });
           const lineConnections = new Map<[number, number, number], [number, number, number]>();
           const normal = [...vec3.transformMat4(
             vec3.create(),
@@ -873,8 +908,8 @@ window.onload = () => {
                 vec3.create(), NORMAL_Z, adjacentFace.rotateToWorldCoordinates,
               );
               const [x, y] = currentPoint;
-              const px = originalTextureX + (x - minX) * lineTextureScale + lineTextureBuffer;
-              const py = textureY + (y - minY) * lineTextureScale + lineTextureBuffer;
+              const px = originalTextureX + (x - minX) * lineTextureScale + lineTextureBuffer + .5;
+              const py = textureY + (y - minY) * lineTextureScale + lineTextureBuffer + .5;
               ctx.lineTo(px / divisor, py / divisor);
               const sinAngle = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
               if (sinAngle > EPSILON) {      
@@ -887,81 +922,34 @@ window.onload = () => {
             //ctx.strokeStyle = '#000';
             ctx.stroke();
           });
-    
-          // const imageData = ctx.createImageData(width, height);
-          // const normalArray = normal.map(v => Math.round((v + 1) * 127.5));
-          // const lineEntries = [...lineConnections.entries()];
-          // for(let py=0; py<height; py++) {
-          //   //const y = (py - minY) * TEXTURE_SCALE + TEXTURE_BUFFER;
-          //   const y = (py - TEXTURE_BUFFER)/TEXTURE_SCALE + minY;
-          //   for(let px=0; px<width; px++) {
-          //     //const x = (px - minX) * TEXTURE_SCALE + TEXTURE_BUFFER;
-          //     const x = (px - TEXTURE_BUFFER)/TEXTURE_SCALE + minX;
-          //     const index = (py * width + px) * 4;
-          //     // find the closest line
-          //     let minD = 1;
-          //     lineEntries.forEach(worldPoints => {
-          //       const line: Line = worldPoints.map(worldPoint => {
-          //         return vec3.transformMat4(
-          //           vec3.create(),
-          //           worldPoint,
-          //           fromWorldCoordinates,
-          //         );
-          //       }) as any; 
-          //       const d = lineDistance(line, [x, y]);
-          //       minD = Math.min(d, minD);
-          //     });
-          //     imageData.data.set([...normalArray, 127 + minD * 128 | 0], index);
-          //   }
-          // }
-          // ctx.putImageData(imageData, originalTextureX, textureY);
-    
-          //ctx.lineCap = 'round';
-          // ctx.fillStyle = 'rgba(0, 0, 0, .5)';
-          // ctx.globalCompositeOperation = 'destination-out';
-          const lineConnectionValues = new Set(lineConnections.values());
-          while (lineConnections.size) {
-            const lineConnectionKeys = [...lineConnections.keys()];
-            // find the start of a line
-            let currentWorldPoint = lineConnectionKeys.find(point => {
-              return !lineConnectionValues.has(point);
-            });
-            const closePath = !currentWorldPoint;
-            if (closePath) {
-              // if there are no unclosed lines, we are circular and can
-              // start anywhere with any point
-              currentWorldPoint = lineConnectionKeys[0];
+
+          const imageData = ctx.getImageData(originalTextureX, textureY, width, height);
+          // TODO also compare to border, not just lines
+          // I think we can calculate that by removing the reverse lines of the internal polygons 
+          for(let py=0; py<height; py++) {
+            const y = (py - lineTextureBuffer + .5)/lineTextureScale + minY;
+            for(let px=0; px<width; px++) {
+              const x = (px - lineTextureBuffer + .5)/lineTextureScale + minX;
+              const index = (py * width + px) * 4;
+              let minD = 1;
+              [...lineConnections].forEach(worldPoints => {
+                const line: Line = worldPoints.map(worldPoint => {
+                  return vec3.transformMat4(
+                    vec3.create(),
+                    worldPoint,
+                    fromWorldCoordinates,
+                  );
+                }) as any;
+                const d = vec2.length(closestLinePointVector(line, [x, y]));
+                minD = Math.min(minD, d);
+              });
+              imageData.data.set([minD * 255 | 0], index);
+              //imageData.data.set(distanceArray, index);
             }
+          }
+          ctx.putImageData(imageData, originalTextureX, textureY);
     
-            ctx.beginPath();
-            while (currentWorldPoint) {
-              const nextWorldPoint = lineConnections.get(currentWorldPoint);
-              lineConnections.delete(currentWorldPoint);
-              const [x, y] = vec3.transformMat4(
-                vec3.create(),
-                currentWorldPoint,
-                fromWorldCoordinates,
-              );
-              const px = originalTextureX + (x - minX) * lineTextureScale + lineTextureBuffer;
-              const py = textureY + (y - minY) * lineTextureScale + lineTextureBuffer;
-              ctx.lineTo(px / divisor, py / divisor);
-              // round corners
-              currentWorldPoint = nextWorldPoint;
-            }
-            if (closePath) {
-              ctx.closePath();
-            }
-            ctx.save();
-            ctx.globalCompositeOperation = 'source-atop';
-            ['red', '#FF0', '#FFF'].forEach((strokeStyle, i) => {
-              ctx.strokeStyle = strokeStyle;
-              //ctx.lineWidth = Math.pow(2, 2 - i);
-              ctx.lineWidth = (3 - i) * baseLineWidth/divisor;
-              ctx.stroke();  
-            });
-            ctx.restore();
-          }  
-        });
+          });
       }
 
 
@@ -1046,9 +1034,8 @@ window.onload = () => {
 
   [
     geometryLineCanvases,
-    [geometryLineCanvases[0]],
-    ...materialCanvases,
-  ].forEach((images, i) => {
+    ...materialCanvases.flat(1).map(c => [c]),
+  ].forEach((images, i) => {  
     gl.activeTexture(gl.TEXTURE0 + i);
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -1057,13 +1044,14 @@ window.onload = () => {
       gl.texImage2D(gl.TEXTURE_2D, level, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
     });
     // NOT required (don't use mipmaps)
-    gl.generateMipmap(gl.TEXTURE_2D);
+    //gl.generateMipmap(gl.TEXTURE_2D);
     // materials needs a linear filter otherwise the gaps between resolutions
     // causes holes in the material
     gl.texParameteri(
       gl.TEXTURE_2D,
       gl.TEXTURE_MIN_FILTER,
-      images.length > 1 ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR,
+      //images.length > 1 ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR,
+      gl.LINEAR,
     );
   });
 
@@ -1108,10 +1096,10 @@ window.onload = () => {
 
   const modelRotationMatrix = mat4.identity(mat4.create());
   let previousPosition: ReadonlyVec3 | undefined;
-  let material = 2;
+  let material = 1;
 
   window.onclick = (e: MouseEvent) => {
-    // camera position is 0, 0, 0
+    // camera position is 0, 0, 0f
     const inverseProjectionMatrix = mat4.invert(mat4.create(), projectionMatrix);
     const world = vec3.transformMat4(
       vec3.create(),
@@ -1207,7 +1195,8 @@ window.onload = () => {
     switch (e.key) {
       case 'Enter':
         material = (material + 1)%materials.length;
-        gl.uniform1i(uMaterialTexture, material + 2);
+        gl.uniform1i(uMaterialTexture, material * 2 + 1);
+        gl.uniform1i(uMaterialDistanceTexture, material * 2 + 2);
         break;
       case 'ArrowLeft':
         cameraX-=.1;
@@ -1226,13 +1215,16 @@ window.onload = () => {
         setCameraPosition();
         break;
       case 'a':
-        gl.uniform4f(uMaterialColor1, Math.random(), Math.random(), Math.random(), Math.random());
+        gl.uniform4f(uMaterialColorBase, Math.random()/2, Math.random()/2, Math.random()/2, Math.random());
         break;
       case 's':
-        gl.uniform4f(uMaterialColor2, Math.random(), Math.random(), Math.random(), Math.random());
+        gl.uniform4f(uMaterialColorSurface, Math.random()/2, Math.random()/2, Math.random()/2, Math.random());
         break;
       case 'd':
         gl.uniform4f(uLineColor, Math.random(), Math.random(), Math.random(), 1);
+        break;
+      case 'f':
+        gl.uniform4f(uMaterialColorFeature, Math.random()/2, Math.random()/2, Math.random()/2, Math.random());
         break;
       case 'z':
         lineWidthIndex--;
@@ -1276,12 +1268,13 @@ window.onload = () => {
   const fpsDiv = document.getElementById('fps');
   const lastFrameTimes: number[] = [];
   gl.uniform1i(uLineTexture, 0);
-  gl.uniform1i(uBoundaryTexture, 1);
   //gl.uniform4f(uLineColor, .8, .9, 1, 1);
   gl.uniform4f(uLineColor, 0, 1, 1, 1);
-  gl.uniform1i(uMaterialTexture, material);
-  gl.uniform4f(uMaterialColor1, .4, .4, .5, .5);
-  gl.uniform4f(uMaterialColor2, .2, .2, .4, .5);
+  gl.uniform1i(uMaterialTexture, material * 2 + 1);
+  gl.uniform1i(uMaterialDistanceTexture, material * 2 + 2);
+  gl.uniform4f(uMaterialColorBase, .2, .2, .4, .5);
+  gl.uniform4f(uMaterialColorFeature, .4, .4, .5, .5);
+  gl.uniform4f(uMaterialColorSurface, .5, .5, .5, .5);
   setLineWidth();
   setCameraPosition();
   let then = 0;

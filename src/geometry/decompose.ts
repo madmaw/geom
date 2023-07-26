@@ -1,7 +1,7 @@
 import { ReadonlyMat4, ReadonlyVec2, ReadonlyVec3, mat4, vec2, vec3 } from "gl-matrix";
 import { ConvexPolygon, Face, dedupePolygon } from "./face";
 import { Shape, convexShapeContainPoint } from "./shape";
-import { Line, lineIntersection } from "./line";
+import { Line, lineDeltaAndLength, lineIntersection } from "./line";
 import { Plane, flipPlane, planeToTransforms } from "./plane";
 import { EPSILON, NORMAL_Z } from "./constants";
 
@@ -201,9 +201,9 @@ function decomposeConvexPolygon(polygon: ConvexPolygon, lines: readonly Line[]):
       const p2 = polygon[(i + 2) % polygon.length];
       const p3 = polygon[(i + 3) % polygon.length];
 
-      const [prevIntersectionD] = lineDeltaAndLength(p0, p1, line);
-      const [currentIntersectionD, currentLength, currentDirection] = lineDeltaAndLength(p1, p2, line);
-      const [nextIntersectionD] = lineDeltaAndLength(p2, p3, line);
+      const [prevIntersectionD] = lineDeltaAndLength(p0 as any, p1 as any, line);
+      const [currentIntersectionD, currentLength, currentDirection] = lineDeltaAndLength(p1 as any, p2 as any, line);
+      const [nextIntersectionD] = lineDeltaAndLength(p2 as any, p3 as any, line);
 
       if (
         // the line is parallel
@@ -259,14 +259,3 @@ function decomposeConvexPolygon(polygon: ConvexPolygon, lines: readonly Line[]):
   return [polygon];
 }
 
-function lineDeltaAndLength(p1: ReadonlyVec3, p2: ReadonlyVec3, line: Line): [number | undefined, number, ReadonlyVec3] {
-  const delta = vec3.subtract(vec3.create(), p2, p1);
-  const length = vec3.length(delta);
-  const direction = vec3.normalize(vec3.create(), delta);
-  const edge: Line = [
-    direction as ReadonlyVec2,
-    p1 as ReadonlyVec2,
-  ];
-  const nextIntersectionD = lineIntersection(edge, line);
-  return [nextIntersectionD, length, direction];
-}

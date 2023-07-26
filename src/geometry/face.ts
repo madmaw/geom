@@ -1,5 +1,5 @@
 import { ReadonlyMat4, ReadonlyVec2, ReadonlyVec3, vec3 } from "gl-matrix";
-import { Line, lineIntersection } from "./line";
+import { Line, lineIntersection, lineIntersectsPoints } from "./line";
 import { EPSILON } from "./constants";
 
 export type Face = {
@@ -18,23 +18,9 @@ export function convexPolygonContainsPoint(
   const line1: Line = [[0, 1], point as ReadonlyVec2];
   const count = polygon.reduce((count, p1, i) => {
     const p2 = polygon[(i + 1)%polygon.length];
-    const delta = vec3.subtract(vec3.create(), p2, p1);
-    const direction = vec3.normalize(vec3.create(), delta);
-    const line2: Line = [direction as ReadonlyVec2, p1 as ReadonlyVec2];
-    const intersection1 = lineIntersection(
-      line1,
-      line2,
-    );
-    const intersection2 = lineIntersection(
-      line2,
-      line1,
-    );
-    if (intersection1 > 0
-      && intersection2 > 0
-      && intersection2 < vec3.length(delta)
-    ) {
+    if (lineIntersectsPoints(p1, p2, line1)) {
       count++;
-    };
+    }
     return count;
   }, 0);
   return count % 2;
