@@ -39,7 +39,7 @@ const U_MODEL_ROTATION_MATRIX = 'uModelRotation';
 const U_PROJECTION_MATRIX = "uProjection";
 const U_LINE_TEXTURE = 'uLine';
 const U_LINE_COLOR = 'uLineColor';
-const U_LINE_WIDTH = 'uLineWidth';
+const U_LINE_SCALE_EXPONENT_MATERIAL_SCALE = 'uScales';
 const U_MATERIAL_TEXTURE = 'uMaterial';
 const U_MATERIAL_DISTANCE_TEXTURE = 'uMaterialDistance';
 const U_MATERIAL_COLOR_BASE = 'uMaterialColorBase';
@@ -99,7 +99,7 @@ const FRAGMENT_SHADER = `#version 300 es
   in vec2 ${V_LINE_TEXTURE_COORD};
   uniform sampler2D ${U_LINE_TEXTURE};
   uniform vec4 ${U_LINE_COLOR};
-  uniform vec4 ${U_LINE_WIDTH};
+  uniform vec3 ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE};
   uniform sampler2D ${U_MATERIAL_TEXTURE};
   uniform sampler2D ${U_MATERIAL_DISTANCE_TEXTURE};
   uniform vec4 ${U_MATERIAL_COLOR_BASE};
@@ -117,7 +117,7 @@ const FRAGMENT_SHADER = `#version 300 es
     // multiplying by cos, while incorrect, reduces burring as c approaches 0
     //float depthScale = c;
     //float depthScale = dot(${V_NORMAL}.xyz, vec3(0, 0, 1));
-    float depthScale = ${MATERIAL_DEPTH_SCALE}/${U_LINE_WIDTH}.w;
+    float depthScale = ${MATERIAL_DEPTH_SCALE}/${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.z;
 
     float depth = ${DEPTH_RANGE/2};
     // material
@@ -135,17 +135,17 @@ const FRAGMENT_SHADER = `#version 300 es
       );  
       td = texture(
         ${U_MATERIAL_DISTANCE_TEXTURE},
-        p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
+        p.xy * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.z + ${V_PLANE_POSITION}.zw
       );
-      vec2 cp = p.xy - (td.xy - .5) * ${MATERIAL_OFFSET_SCALE}/${U_LINE_WIDTH}.w;
-      float r = td.z * ${MATERIAL_OFFSET_SCALE}/${U_LINE_WIDTH}.w;
+      vec2 cp = p.xy - (td.xy - .5) * ${MATERIAL_OFFSET_SCALE}/${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.z;
+      float r = td.z * ${MATERIAL_OFFSET_SCALE}/${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.z;
       vec4 tc = texture(
         ${U_LINE_TEXTURE},
         ${V_LINE_TEXTURE_COORD} + cp * ${LINE_TEXTURE_PROPORTION}
       );
       vec4 tm1 = tc.r < r ? vec4(.5) : texture(
         ${U_MATERIAL_TEXTURE},
-        p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
+        p.xy * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.z + ${V_PLANE_POSITION}.zw
       );
 
       float surfaceDepth = (tm1.z - .5) * ${DEPTH_RANGE} * depthScale; 
@@ -166,17 +166,12 @@ const FRAGMENT_SHADER = `#version 300 es
       // TODO do we need to update tc with the new p?
       tm = tc.r < r ? vec4(.5) : texture(
         ${U_MATERIAL_TEXTURE},
-        p.xy * ${U_LINE_WIDTH}.w + ${V_PLANE_POSITION}.zw
+        p.xy * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.z + ${V_PLANE_POSITION}.zw
       );  
       tl = texture(
         ${U_LINE_TEXTURE},
         ${V_LINE_TEXTURE_COORD} + p.xy * ${LINE_TEXTURE_PROPORTION}
       );
-      // if (tc.r < r) {
-      //   count = ${NUM_STEPS};
-      //   //tm = tc;
-      //   tm = vec4(.5);
-      // }
 
       if (tl.a < .5 && depth < 0.) {
         count = ${NUM_STEPS};
@@ -198,8 +193,10 @@ const FRAGMENT_SHADER = `#version 300 es
         ${U_LINE_COLOR}.rgb,
         //tl.xyz,
         //0.
-        pow(1. - tl.r, 40.)
-        //length(${U_LINE_WIDTH}.xyz) * max(length(tl.rgb * ${U_LINE_WIDTH}.xyz), (1. - tl.a)) * pow(1. - min(1., abs(depth * ${2/DEPTH_RANGE}.)), 4.)
+        pow(
+          (1. - tl.r) * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.x,
+          ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.y
+        )
       ),
       1
     );
@@ -296,8 +293,8 @@ window.onload = () => {
   const roundedCube1 = round(round(cube, -1, false), -.8, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
-  const segmentsz = 8;
-  const segmentsy = 2;
+  const segmentsz = 16;
+  const segmentsy = 8;
   const ry = .3;
   const rz = 2;
   const hole = rz;
@@ -364,14 +361,14 @@ window.onload = () => {
   }).filter(v => v != null);
   
   const shapes: readonly Shape[] = ([
-    //[cube, []],
+    [cube, []],
     //[shape1, []],
     //[shape7, [shape6]],
     // [shape5, [shape6]],
     // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, []],
     //[disc, columns],
-    [roundedCube1, []],
+    //[roundedCube1, []],
     //[sphere, []],
     //[sphere, [column]],
     //[column, []],
@@ -499,7 +496,7 @@ window.onload = () => {
     uProjectionMatrix,
     uLineTexture,
     uLineColor,
-    uLineWidth,
+    uLineScaleExponentMaterialScale,
     uMaterialTexture,
     uMaterialDistanceTexture,
     uMaterialColorBase,
@@ -512,7 +509,7 @@ window.onload = () => {
     U_PROJECTION_MATRIX,
     U_LINE_TEXTURE,
     U_LINE_COLOR,
-    U_LINE_WIDTH,
+    U_LINE_SCALE_EXPONENT_MATERIAL_SCALE,
     U_MATERIAL_TEXTURE,
     U_MATERIAL_DISTANCE_TEXTURE,
     U_MATERIAL_COLOR_BASE,
@@ -814,13 +811,9 @@ window.onload = () => {
   let textureMaxHeight = lineTextureScale * 4;
   //ctx.lineCap = 'round';
 
-  const geometryLineCanvases = new Array(1).fill(0).map((_, level) => {
-    const canvas = level ? document.createElement('canvas') : document.getElementById("canvasLines") as HTMLCanvasElement;
-    const dimension = Math.pow(lineTextureDimension, 1/(level+1));
-    canvas.width = dimension;
-    canvas.height = dimension;
-    return canvas;
-  });
+  const geometryLineCanvas = document.getElementById("canvasLines") as HTMLCanvasElement;
+  geometryLineCanvas.width = lineTextureDimension;
+  geometryLineCanvas.height = lineTextureDimension;
   // const geometryLineCanvas = document.getElementById("canvasLines") as HTMLCanvasElement;
   // geometryLineCanvas.width = LINE_TEXTURE_DIMENSION;
   // geometryLineCanvas.height = LINE_TEXTURE_DIMENSION;
@@ -885,71 +878,67 @@ window.onload = () => {
         //     textureY + (py - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER,
         //   ];
         // }
-        geometryLineCanvases.forEach((geometryLineCanvas, i) => {
-          const divisor = Math.pow(2, i);
-          const ctx = geometryLineCanvas.getContext('2d', {
-            willReadFrequently: true,
-          });
-          const lineConnections = new Map<[number, number, number], [number, number, number]>();
-          const normal = [...vec3.transformMat4(
-            vec3.create(),
-            NORMAL_Z,
-            rotateToWorldCoordinates,
-          )] as [number, number, number];
-    
-          polygons.forEach(polygon => {
-            ctx.beginPath();
-            polygon.forEach((currentPoint, i) => {
-              const currentWorldPoint = getWorldPoint(currentPoint, toWorldCoordinates);
-              const nextPoint = polygon[(i + 1)%polygon.length];
-              const nextWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
-              const adjacentFace = pointAdjacency.get(nextWorldPoint).get(currentWorldPoint);
-              const adjacentNormal = vec3.transformMat4(
-                vec3.create(), NORMAL_Z, adjacentFace.rotateToWorldCoordinates,
-              );
-              const [x, y] = currentPoint;
-              const px = originalTextureX + (x - minX) * lineTextureScale + lineTextureBuffer + .5;
-              const py = textureY + (y - minY) * lineTextureScale + lineTextureBuffer + .5;
-              ctx.lineTo(px / divisor, py / divisor);
-              const sinAngle = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
-              if (sinAngle > EPSILON) {      
-                lineConnections.set(currentWorldPoint, nextWorldPoint);
-              }
-            });
-            ctx.closePath();
-            ctx.fill();
-            ctx.lineWidth = baseLineWidth/divisor;
-            //ctx.strokeStyle = '#000';
-            ctx.stroke();
-          });
-
-          const imageData = ctx.getImageData(originalTextureX, textureY, width, height);
-          // TODO also compare to border, not just lines
-          // I think we can calculate that by removing the reverse lines of the internal polygons 
-          for(let py=0; py<height; py++) {
-            const y = (py - lineTextureBuffer + .5)/lineTextureScale + minY;
-            for(let px=0; px<width; px++) {
-              const x = (px - lineTextureBuffer + .5)/lineTextureScale + minX;
-              const index = (py * width + px) * 4;
-              let minD = 1;
-              [...lineConnections].forEach(worldPoints => {
-                const line: Line = worldPoints.map(worldPoint => {
-                  return vec3.transformMat4(
-                    vec3.create(),
-                    worldPoint,
-                    fromWorldCoordinates,
-                  );
-                }) as any;
-                const d = vec2.length(closestLinePointVector(line, [x, y]));
-                minD = Math.min(minD, d);
-              });
-              imageData.data.set([minD * 255 | 0], index);
-              //imageData.data.set(distanceArray, index);
+        const ctx = geometryLineCanvas.getContext('2d', {
+          willReadFrequently: true,
+        });
+        const lineConnections = new Map<[number, number, number], [number, number, number]>();
+        const normal = [...vec3.transformMat4(
+          vec3.create(),
+          NORMAL_Z,
+          rotateToWorldCoordinates,
+        )] as [number, number, number];
+  
+        polygons.forEach(polygon => {
+          ctx.beginPath();
+          polygon.forEach((currentPoint, i) => {
+            const currentWorldPoint = getWorldPoint(currentPoint, toWorldCoordinates);
+            const nextPoint = polygon[(i + 1)%polygon.length];
+            const nextWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
+            const adjacentFace = pointAdjacency.get(nextWorldPoint).get(currentWorldPoint);
+            const adjacentNormal = vec3.transformMat4(
+              vec3.create(), NORMAL_Z, adjacentFace.rotateToWorldCoordinates,
+            );
+            const [x, y] = currentPoint;
+            const px = originalTextureX + (x - minX) * lineTextureScale + lineTextureBuffer + .5;
+            const py = textureY + (y - minY) * lineTextureScale + lineTextureBuffer + .5;
+            ctx.lineTo(px, py);
+            const sinAngle = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
+            if (sinAngle > EPSILON) {      
+              lineConnections.set(currentWorldPoint, nextWorldPoint);
             }
-          }
-          ctx.putImageData(imageData, originalTextureX, textureY);
-    
           });
+          ctx.closePath();
+          ctx.fill();
+          ctx.lineWidth = baseLineWidth;
+          //ctx.strokeStyle = '#000';
+          ctx.stroke();
+        });
+
+        const imageData = ctx.getImageData(originalTextureX, textureY, width, height);
+        // TODO also compare to border, not just lines
+        // I think we can calculate that by removing the reverse lines of the internal polygons 
+        for(let py=0; py<height; py++) {
+          const y = (py - lineTextureBuffer + .5)/lineTextureScale + minY;
+          for(let px=0; px<width; px++) {
+            const x = (px - lineTextureBuffer + .5)/lineTextureScale + minX;
+            const index = (py * width + px) * 4;
+            let minD = 1;
+            [...lineConnections].forEach(worldPoints => {
+              const line: Line = worldPoints.map(worldPoint => {
+                return vec3.transformMat4(
+                  vec3.create(),
+                  worldPoint,
+                  fromWorldCoordinates,
+                );
+              }) as any;
+              const d = vec2.length(closestLinePointVector(line, [x, y]));
+              minD = Math.min(minD, d);
+            });
+            imageData.data.set([minD * 255 | 0], index);
+            //imageData.data.set(distanceArray, index);
+          }
+        }
+        ctx.putImageData(imageData, originalTextureX, textureY);
       }
 
 
@@ -1033,20 +1022,15 @@ window.onload = () => {
   );
 
   [
-    geometryLineCanvases,
-    ...materialCanvases.flat(1).map(c => [c]),
-  ].forEach((images, i) => {  
+    geometryLineCanvas,
+    ...materialCanvases.flat(1),
+  ].forEach((image, i) => {  
     gl.activeTexture(gl.TEXTURE0 + i);
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    // TODO need to mipmap geometry because we are scaling it so much
-    images.forEach((image, level) => {
-      gl.texImage2D(gl.TEXTURE_2D, level, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-    });
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
     // NOT required (don't use mipmaps)
     //gl.generateMipmap(gl.TEXTURE_2D);
-    // materials needs a linear filter otherwise the gaps between resolutions
-    // causes holes in the material
     gl.texParameteri(
       gl.TEXTURE_2D,
       gl.TEXTURE_MIN_FILTER,
@@ -1227,34 +1211,42 @@ window.onload = () => {
         gl.uniform4f(uMaterialColorFeature, Math.random()/2, Math.random()/2, Math.random()/2, Math.random());
         break;
       case 'z':
-        lineWidthIndex--;
-        setLineWidth();
+        lineExponent*=1.2;
+        setLineScaleExponentMaterialScale();
         break;
       case 'x':
-        lineWidthIndex++;
-        setLineWidth();
+        lineExponent/=1.2;
+        setLineScaleExponentMaterialScale();
+        break;
+      case 'c':
+        lineScale/=2;
+        setLineScaleExponentMaterialScale();
+        break;
+      case 'v':
+        lineScale*=2;
+        setLineScaleExponentMaterialScale();
         break;
       case 'w':
         materialScale*=1.5;
-        setLineWidth();
+        setLineScaleExponentMaterialScale();
         console.log('material scale', materialScale);
         break;
       case 'q':
         materialScale/=1.5;
-        setLineWidth();
+        setLineScaleExponentMaterialScale();
         console.log('material scale', materialScale);
         break;
     } 
   };
 
-  let lineWidthIndex = 0;
+  let lineScale = 1;
+  let lineExponent = 50;
   let materialScale = MATERIAL_DEPTH_SCALE;
-  function setLineWidth() {
-    gl.uniform4f(
-      uLineWidth,
-      lineWidthIndex == 0 ? 1 : 0,
-      lineWidthIndex == 1 ? 1 : 0,
-      lineWidthIndex == 2 ? 1 : 0,
+  function setLineScaleExponentMaterialScale() {
+    gl.uniform3f(
+      uLineScaleExponentMaterialScale,
+      lineScale,
+      lineExponent,
       materialScale,
     );
   }
@@ -1275,7 +1267,7 @@ window.onload = () => {
   gl.uniform4f(uMaterialColorBase, .2, .2, .4, .5);
   gl.uniform4f(uMaterialColorFeature, .4, .4, .5, .5);
   gl.uniform4f(uMaterialColorSurface, .5, .5, .5, .5);
-  setLineWidth();
+  setLineScaleExponentMaterialScale();
   setCameraPosition();
   let then = 0;
   function animate(now: number) {
