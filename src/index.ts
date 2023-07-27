@@ -5,7 +5,7 @@ import { ReadonlyMat4, ReadonlyVec2, ReadonlyVec3, mat4, vec2, vec3 } from "gl-m
 import { loadShader } from "./util/webgl";
 import { EPSILON, NORMAL_X, NORMAL_Z } from "./geometry/constants";
 import { Face, convexPolygonContainsPoint } from "./geometry/face";
-import { Material, clusteredDistributionFactory, featureMaterial, randomDistributionFactory } from "./materials/material";
+import { Material, clusteredDistributionFactory, evenDistributionFactory, featureMaterial, randomDistributionFactory } from "./materials/material";
 import { riverStonesFactory } from "./materials/river_stones";
 import { craterFeature } from "./materials/craters";
 import { staticFactory } from "./materials/static";
@@ -13,6 +13,7 @@ import { round } from "./geometry/round";
 import { DEPTH_RANGE, MATERIAL_TEXTURE_DIMENSION, THREE_WAY_NORMALS } from "./constants";
 import { spikeFeature } from "./materials/spikes";
 import { Line, closestLinePointVector, lineDeltaAndLength, lineIntersection, lineIntersectsPoints, toLine } from "./geometry/line";
+import { hillFeature } from "./materials/hills";
 
 type MaybeInvertedFace = Face & {
   inverted: number,
@@ -22,9 +23,9 @@ const LINE_TEXTURE_DIMENSION = 4096;
 //const LINE_TEXTURE_DIMENSION = 1024;
 //const LINE_TEXTURE_SCALE = 80;
 //const c = 64/4096;
-const LINE_TEXTURE_PROPORTION = 48/LINE_TEXTURE_DIMENSION;
+const LINE_TEXTURE_PROPORTION = 64/LINE_TEXTURE_DIMENSION;
 //const LINE_TEXTURE_BUFFER = LINE_TEXTURE_SCALE/2;
-const BORDER_EXPAND = .05;
+const BORDER_EXPAND = .02;
 //const MATERIAL_TEXTURE_DIMENSION = 4096;
 const MATERIAL_DEPTH_SCALE = 256/(MATERIAL_TEXTURE_DIMENSION * DEPTH_RANGE);
 const MATERIAL_OFFSET_SCALE = 256/MATERIAL_TEXTURE_DIMENSION;
@@ -194,7 +195,7 @@ const FRAGMENT_SHADER = `#version 300 es
         //tl.xyz,
         //0.
         pow(
-          (1. - tl.r) * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.x,
+          (1. - tl.g) * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.x,
           ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.y
         )
       ),
@@ -293,9 +294,11 @@ window.onload = () => {
   const roundedCube1 = round(round(cube, -1, false), -.8, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
-  const segmentsz = 16;
-  const segmentsy = 8;
-  const ry = .3;
+  // const segmentsz = 16;
+  // const segmentsy = 8;
+  const segmentsz = 6;
+  const segmentsy = 2;
+  const ry = .6;
   const rz = 2;
   const hole = rz;
 
@@ -361,13 +364,13 @@ window.onload = () => {
   }).filter(v => v != null);
   
   const shapes: readonly Shape[] = ([
-    [cube, []],
+    //[cube, []],
     //[shape1, []],
     //[shape7, [shape6]],
     // [shape5, [shape6]],
     // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, []],
-    //[disc, columns],
+    [disc, columns],
     //[roundedCube1, []],
     //[sphere, []],
     //[sphere, [column]],
@@ -442,7 +445,7 @@ window.onload = () => {
   const lineTextureDimension = LINE_TEXTURE_DIMENSION;
   const lineTextureScale = lineTextureDimension * LINE_TEXTURE_PROPORTION;
   const lineTextureBuffer = lineTextureScale / 2;
-  const baseLineWidth = lineTextureDimension/4096;
+  const baseLineWidth = lineTextureDimension/LINE_TEXTURE_DIMENSION;
   
   const projectionMatrix = mat4.multiply(
     mat4.create(),
@@ -548,32 +551,11 @@ window.onload = () => {
         return face == adjacentFace;
       });
     });
-
-    const currentWorldPoint = getWorldPoint(polygons[0][0], toWorldCoordinates);
-    const nextWorldPoint = getWorldPoint(polygons[0][1], toWorldCoordinates);
-    // only keep faces that map to themselves (overlapping faces will map to another face)
-    const adjacentFace = pointAdjacency.get(currentWorldPoint).get(nextWorldPoint);
-
-    return adjacentFace == face;
-      // and faces that connect to something
-      // && !polygons.some(polygon => polygon.some((p, i) => {
-      //   const n = polygon[(i + 1)%polygon.length];
-      //   const ph = hashPoint(p, toWorldCoordinates);
-      //   const nh = hashPoint(n, toWorldCoordinates);
-      //   // note we have reversed the order here to get the joining face
-      //   const adjacentFace = pointAdjacency.get(nh)?.get(ph);
-      //   return !adjacentFace;
-      // }));
   });
 
   const pointFaces = faces.reduce<Map<[number, number, number], Set<Face>>>(
     (acc, face) => {
       const { polygons, toWorldCoordinates } = face;
-      // const normal = [...vec3.transformMat4(
-      //   vec3.create(),
-      //   NORMAL_Z,
-      //   rotateToWorldCoordinates,
-      // )] as [number, number, number];
       polygons.forEach(polygon => {
         polygon.forEach(point => {
           const worldPoint = getWorldPoint(point, toWorldCoordinates);
@@ -586,127 +568,6 @@ window.onload = () => {
   );
 
   console.log('point faces', pointFaces);
-  /* caculate normals for each point in the faces
-  const pointNormals = new Map<[number, number, number], [number, number, number][]>();
-
-  faces.forEach(face => {
-    const { polygons, toWorldCoordinates } = face;
-    const pointPolygons = [...pointFaces.entries()].reduce((acc, [worldPoint, faces]) => {
-      if (faces.has(face)) {
-        polygons.forEach(polygon => {
-          const inPolygon = polygon.some(point => {
-            return getWorldPoint(point, toWorldCoordinates) == worldPoint;
-          });
-          if (inPolygon) {
-            acc.set(worldPoint, (acc.get(worldPoint) || new Set()).add(polygon));
-          }
-        });
-      }
-      return acc;
-    }, new Map<[number, number, number], Set<ConvexPolygon>>());
-
-    let unmeasuredPointsAndPolygons = [...pointPolygons.entries()].map(([startWorldPoint, polygons]) => {
-      return [...polygons].map(polygon => [startWorldPoint, polygon] as const);
-    }).flat(1).sort(([p1], [p2]) => pointFaces.get(p2).size - pointFaces.get(p1).size);
-
-    while (unmeasuredPointsAndPolygons.length) {
-      unmeasuredPointsAndPolygons = unmeasuredPointsAndPolygons.filter(([startWorldPoint, polygon]) => {
-        const faces = pointFaces.get(startWorldPoint);
-        let startNormal: [number, number, number] | undefined;
-        if (faces.size > 2) {
-          // it's good as is
-          startNormal = [...vec3.normalize(vec3.create(), [...faces].reduce<ReadonlyVec3>((acc, { rotateToWorldCoordinates }) => {
-            const normal = vec3.transformMat4(vec3.create(), NORMAL_Z, rotateToWorldCoordinates);
-            return vec3.add(vec3.create(), acc, vec3.scale(vec3.create(), normal, 1/faces.size));
-          }, [0, 0, 0]))] as [number, number, number];
-          pointNormals.set(startWorldPoint, [startNormal]);
-        } else if (faces.size > 1) {
-          // should only ever be one
-          startNormal = pointNormals.get(startWorldPoint)?.[0];
-        }
-        if (startNormal) {
-          // find the index of the point in the polygon
-          const pointIndex = polygon.findIndex(point => {
-            const worldPoint = getWorldPoint(point, toWorldCoordinates);
-            return startWorldPoint == worldPoint;
-          });
-          const currentPoint = polygon[pointIndex];
-          const nextPoint = polygon[(pointIndex+1)%polygon.length];
-          const angle = Math.atan2(nextPoint[1] - currentPoint[1], nextPoint[0] - currentPoint[0]);
-          // find the adjacent polygon on the next point that has the same angle
-          //console.log(angle);
-          let endNormal: [number, number, number] | undefined;
-          let currentWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
-          const worldPoints: [number, number, number][] = [currentWorldPoint];
-          let keepGoing: boolean | number = 1;
-          while (!endNormal && keepGoing) {
-            // find a polygon with the next line matching this angle
-            const polygons = pointPolygons.get(currentWorldPoint);
-            keepGoing = [...polygons].some(polygon => {
-              const pointIndex = polygon.findIndex(point => {
-                const worldPoint = getWorldPoint(point, toWorldCoordinates);
-                return currentWorldPoint == worldPoint;
-              });
-              const point = polygon[pointIndex];
-              const nextIndex = (pointIndex + 1)%polygon.length;
-              const nextPoint = polygon[nextIndex];
-              const nextAngle = Math.atan2(nextPoint[1] - point[1], nextPoint[0] - point[0]);
-              // check angle delta
-              if (Math.abs(nextAngle - angle)%(Math.PI*2) < EPSILON) {
-                currentWorldPoint = getWorldPoint(nextPoint, toWorldCoordinates);
-                const faces = pointFaces.get(currentWorldPoint);
-                if (faces.size > 2) {
-                  // it's good as is
-                  endNormal = [...vec3.normalize(vec3.create(), [...faces].reduce<ReadonlyVec3>((acc, { rotateToWorldCoordinates }) => {
-                    const normal = vec3.transformMat4(vec3.create(), NORMAL_Z, rotateToWorldCoordinates);
-                    return vec3.add(vec3.create(), acc, vec3.scale(vec3.create(), normal, 1/faces.size));
-                  }, [0, 0, 0]))] as [number, number, number];
-                } else if (faces.size > 1) {
-                  // should only ever be one
-                  endNormal = pointNormals.get(currentWorldPoint)?.[0];
-                } 
-                if (!endNormal) {
-                  worldPoints.push(currentWorldPoint);
-                }
-                return 1;
-              }
-            });
-          }
-          if (endNormal) {
-            const endWorldPoint = worldPoints[worldPoints.length-1];
-            const maximumDistance = vec3.distance(startWorldPoint, endWorldPoint);
-            worldPoints.forEach(worldPoint => {
-              const faces = pointFaces.get(worldPoint);
-              const normals = pointNormals.get(worldPoint) || [];
-              if (faces.size < 2 || !normals.length) {
-                const distance = vec3.distance(startWorldPoint, worldPoint);
-                const scale = distance/maximumDistance;
-                const normal = vec3.normalize(
-                  vec3.create(),
-                  vec3.add(
-                    vec3.create(),
-                    vec3.scale(vec3.create(), startNormal, 1 - scale),
-                    vec3.scale(vec3.create(), endNormal, scale),
-                  ),
-                );
-                pointNormals.set(
-                  worldPoint,
-                  normals.concat(
-                    [[...normal] as [number, number, number]],
-                  ),
-                );  
-              }
-            });
-          }
-          return !endNormal && worldPoints.length > 1;
-        }
-        // don't measure internal points, should happen as part of measuring external points
-        return faces.size > 1;
-      });
-    }
-  });
-  console.log('point normals', pointNormals);
-  */
 
   console.log(faces.map(({ polygons, toWorldCoordinates }) => (
     polygons.map(polygon => {
@@ -726,7 +587,7 @@ window.onload = () => {
         50,
         1,
         5,
-        .8,
+        .8, 
         4
       )),
     ],
@@ -735,8 +596,15 @@ window.onload = () => {
       featureMaterial(staticFactory(40), 4, 4999, randomDistributionFactory(.5, 1)),
     ],
     [
+      featureMaterial(hillFeature(.5), 299, 99, randomDistributionFactory(.9, 2)),
+    ],
+    [
+      featureMaterial(hillFeature(-.5), 99, 999, randomDistributionFactory(.9, 2)),
       featureMaterial(staticFactory(99), 9, 4999, randomDistributionFactory(.9, 1)),
-      featureMaterial(riverStonesFactory(1), 99, 199, randomDistributionFactory(.9, 2)),
+    ],
+    [
+      featureMaterial(staticFactory(99), 9, 4999, randomDistributionFactory(.9, 1)),
+      featureMaterial(riverStonesFactory(1), 39, 399, evenDistributionFactory(99)),
     ],
     [
       featureMaterial(staticFactory(40), 99, 4999, randomDistributionFactory(.9, 2)),
@@ -759,25 +627,6 @@ window.onload = () => {
         9,
       )),
       featureMaterial(staticFactory(40), 9, 1999, randomDistributionFactory(.5, 1)),
-    ],
-    [
-      featureMaterial(spikeFeature(2, 1, 99), 60, 499, clusteredDistributionFactory(
-        9,
-        99,
-        1,
-        0,
-        .3, 
-        9,
-      )),
-      featureMaterial(staticFactory(40), 9, 1999, randomDistributionFactory(.5, 1)),
-      featureMaterial(craterFeature(59), 99, 999, clusteredDistributionFactory(
-        99,
-        199,
-        0,
-        9,
-        1, 
-        3,
-      )),
     ],
   ];
   const materialCanvases = materials.map((materials, i) => {
@@ -809,19 +658,10 @@ window.onload = () => {
   let textureX = lineTextureScale * 4;
   let textureY = 0;
   let textureMaxHeight = lineTextureScale * 4;
-  //ctx.lineCap = 'round';
 
   const geometryLineCanvas = document.getElementById("canvasLines") as HTMLCanvasElement;
   geometryLineCanvas.width = lineTextureDimension;
   geometryLineCanvas.height = lineTextureDimension;
-  // const geometryLineCanvas = document.getElementById("canvasLines") as HTMLCanvasElement;
-  // geometryLineCanvas.width = LINE_TEXTURE_DIMENSION;
-  // geometryLineCanvas.height = LINE_TEXTURE_DIMENSION;
-  // const ctx = geometryLineCanvas.getContext('2d');
-
-  // leave it as alpha
-  //ctx.fillRect(0, 0, LINE_TEXTURE_DIMENSION, LINE_TEXTURE_DIMENSION);
-  //ctx.fillStyle = '#000';
 
   const [
     worldPoints,
@@ -872,16 +712,11 @@ window.onload = () => {
         originalTextureX = textureX;
         textureX += width;
         textureMaxHeight = Math.max(height, textureMaxHeight);
-        // function toTextureCoordinate([px, py]: ReadonlyVec3): [number, number] {
-        //   return [
-        //     originalTextureX + (px - minX) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER, 
-        //     textureY + (py - minY) * LINE_TEXTURE_SCALE + LINE_TEXTURE_BUFFER,
-        //   ];
-        // }
         const ctx = geometryLineCanvas.getContext('2d', {
           willReadFrequently: true,
         });
         const lineConnections = new Map<[number, number, number], [number, number, number]>();
+        const edgeConnections = new Map<[number, number, number], [number, number, number]>();
         const normal = [...vec3.transformMat4(
           vec3.create(),
           NORMAL_Z,
@@ -903,39 +738,50 @@ window.onload = () => {
             const py = textureY + (y - minY) * lineTextureScale + lineTextureBuffer + .5;
             ctx.lineTo(px, py);
             const sinAngle = 1 - Math.abs(vec3.dot(normal, adjacentNormal));
-            if (sinAngle > EPSILON) {      
+            if (sinAngle > EPSILON) {
               lineConnections.set(currentWorldPoint, nextWorldPoint);
+            }
+            if (adjacentFace != face) {
+              edgeConnections.set(currentWorldPoint, nextWorldPoint);
             }
           });
           ctx.closePath();
           ctx.fill();
+          // TODO baseLineWidth is probably 1, so can be removed
           ctx.lineWidth = baseLineWidth;
           //ctx.strokeStyle = '#000';
           ctx.stroke();
         });
 
         const imageData = ctx.getImageData(originalTextureX, textureY, width, height);
-        // TODO also compare to border, not just lines
-        // I think we can calculate that by removing the reverse lines of the internal polygons 
+        const keyPointsAndlines = [...lineConnections].map(worldPoints => {
+          const line: Line = worldPoints.map(worldPoint => {
+            return vec3.transformMat4(
+              vec3.create(),
+              worldPoint,
+              fromWorldCoordinates,
+            );
+          }) as any;
+          return [worldPoints[0], line] as const;
+        });
         for(let py=0; py<height; py++) {
           const y = (py - lineTextureBuffer + .5)/lineTextureScale + minY;
           for(let px=0; px<width; px++) {
             const x = (px - lineTextureBuffer + .5)/lineTextureScale + minX;
             const index = (py * width + px) * 4;
-            let minD = 1;
-            [...lineConnections].forEach(worldPoints => {
-              const line: Line = worldPoints.map(worldPoint => {
-                return vec3.transformMat4(
-                  vec3.create(),
-                  worldPoint,
-                  fromWorldCoordinates,
-                );
-              }) as any;
-              const d = vec2.length(closestLinePointVector(line, [x, y]));
-              minD = Math.min(minD, d);
-            });
-            imageData.data.set([minD * 255 | 0], index);
-            //imageData.data.set(distanceArray, index);
+            // for performance reasons, only perform this calculation if the pixel is filled 
+            if (imageData.data[index + 3]) {
+              let minLine = 1;
+              let minEdge = 1;
+              keyPointsAndlines.forEach(([keyPoint, line]) => {
+                const d = vec2.length(closestLinePointVector(line, [x, y]));
+                minEdge = Math.min(minEdge, d);
+                if (lineConnections.has(keyPoint)) {
+                  minLine = Math.min(minLine, d);
+                }
+              });
+              imageData.data.set([minEdge * 255 | 0, minLine * 255 | 0], index);                
+            }
           }
         }
         ctx.putImageData(imageData, originalTextureX, textureY);
@@ -957,37 +803,7 @@ window.onload = () => {
         return inverted ? [0, 0] : [x, y];
       });
 
-      const newNormalTransforms = uniquePoints.map(worldPoint => {
-        // const normals = pointNormals.get(worldPoint);
-        // const normal = normals.reduce<vec3>((acc, normal) => {
-        //   return vec3.add(
-        //     acc,
-        //     acc,
-        //     normal
-        //   );
-        // }, [0, 0, 0]);
-        // return [...vec3.normalize(normal, normal)] as [number, number, number];
-        // const faces = pointFaces.get(worldPoint);
-        // const normal = [...faces].reduce<vec3>((acc, face) => {
-        //   return vec3.add(
-        //     vec3.create(),
-        //     acc,
-        //     vec3.transformMat4(
-        //       vec3.create(),
-        //       NORMAL_Z,
-        //       face.rotateToWorldCoordinates,
-        //     ),
-        //   );
-        // }, [0, 0, 0]);
-        // const cosAngle = vec3.dot(normal, NORMAL_Z);
-        // const angle = Math.acos(cosAngle);
-        // const axis = Math.abs(cosAngle) > 1 - EPSILON
-        //   ? NORMAL_X
-        //   : vec3.normalize(vec3.create(), vec3.cross(vec3.create(), normal, NORMAL_Z));
-        // const rotation = mat4.rotate(mat4.create(), mat4.identity(mat4.create()), angle, axis);
-        // return [...rotation] as any;
-        // return [...vec3.normalize(normal, normal)] as [number, number, number];
-
+      const newNormalTransforms = uniquePoints.map(() => {
         return [...rotateToWorldCoordinates] as any;
       });
       const dx = Math.random();

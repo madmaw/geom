@@ -88,6 +88,25 @@ export function clusteredDistributionFactory(
   }
 }
 
+export function evenDistributionFactory(d: number): Distribution {
+  let x = 0;
+  let y = 0;
+  return function () {
+    const ox = x;
+    const oy = y;
+    x += d;
+    if (x > MATERIAL_TEXTURE_DIMENSION - d) {
+      x = 0;
+      y += d;
+    }
+    return [
+      ox, 
+      oy,
+      1,
+      ];
+  };
+}
+
 export function featureMaterial(
   f: FeatureFactory | SurfaceFactory,
   baseDimension: number,
