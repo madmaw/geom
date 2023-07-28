@@ -7,11 +7,10 @@ export function riverStonesFactory(
 ): FeatureFactory {
   return function(r: number, z: number) {
     const c = Math.random() * 127;
-    return function(v: Uint8ClampedArray, dx: number, dy: number) {
+    return function(dx: number, dy: number, _: number, existingDepth: number) {
       const stoneDepth = r * depthScale;
       const dzsq = r * r - dx * dx - dy * dy;
       if (dzsq > 0) {
-        const existingDepth = v[2];
         const dz = Math.sqrt(dzsq);
         const depth = Math.min(stoneDepth, dz);
         const depthValue = z + depth / (DEPTH_RANGE * 2);

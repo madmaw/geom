@@ -1,5 +1,5 @@
 import { ReadonlyVec2, ReadonlyVec3, vec2, vec3 } from "gl-matrix";
-import { MATERIAL_TEXTURE_DIMENSION, THREE_WAY_NORMALS } from "../constants";
+import { MATERIAL_TEXTURE_DIMENSION } from "../constants";
 import { lineIntersectsPoints } from "../geometry/line";
 
 export type Material = (ctx: CanvasRenderingContext2D, ctx2: CanvasRenderingContext2D) => void;
@@ -16,17 +16,18 @@ export function imageDataMaterial(f: ImageDataMaterial): Material {
 
 // [nx, ny, d, feature color]
 type Feature = (
-  v: Uint8ClampedArray,
   dx: number,
   dy: number,
+  c: number,
+  z: number,
 ) => [number, number, number, number];
 export type FeatureFactory = (r: number, z: number) => Feature;
 
 // [surface color]
 type Surface = (
-  v: Uint8ClampedArray,
   dx: number,
   dy: number,
+  c: number,
 ) => [number];
 export type SurfaceFactory = (r: number) => Surface;
 
@@ -108,11 +109,26 @@ export function evenDistributionFactory(d: number): Distribution {
 }
 
 export function featureMaterial(
+  f: SurfaceFactory,
+  baseDimension: number,
+  quantity: number,
+  distribution: Distribution,
+  isSurface: true,
+): Material;
+export function featureMaterial(
+  f: FeatureFactory,
+  baseDimension: number,
+  quantity: number,
+  distribution: Distribution,
+  isSurface?: false,
+): Material;
+export function featureMaterial(
   f: FeatureFactory | SurfaceFactory,
   baseDimension: number,
   quantity: number,
   distribution: Distribution,
-): Material {
+  isSurface?: boolean,
+) {
   return function(ctx: CanvasRenderingContext2D, ctx2: CanvasRenderingContext2D) {
     const imageData = ctx.getImageData(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
     const imageData2 = ctx2.getImageData(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
@@ -124,28 +140,30 @@ export function featureMaterial(
       const r = dimension/2;
       const feature = f(r, z);
 
-      for (let dx = 0; dx < dimension; dx++) {
+      for (let dx = -1; dx < dimension + 1; dx++) {
         const px = x + dx + MATERIAL_TEXTURE_DIMENSION | 0;
-        for (let dy = 0; dy < dimension; dy++) {
+        for (let dy = -1; dy < dimension + 1; dy++) {
           const py = y + dy + MATERIAL_TEXTURE_DIMENSION | 0;
           let index = ((py % MATERIAL_TEXTURE_DIMENSION) * MATERIAL_TEXTURE_DIMENSION
             + (px % MATERIAL_TEXTURE_DIMENSION)) * 4;
-          const v = imageData.data.slice(index, index + 4);
           const ox = dx - r + .5;
           const oy = dy - r + .5;
-          const w = feature(v, ox, oy);
+          const z = imageData.data[index + 2];
+          const c = (isSurface ? imageData2 : imageData).data[index + 3];
+          const w = feature(ox, oy, c, z);
+          if (!isSurface && Math.pow(r + 1, 2) > ox * ox + oy * oy) {
+            imageData2.data.set(
+              [
+                ox + 127.5 | 0,
+                oy + 127.5 | 0,
+                r + 1 | 0,
+              ],
+              index,
+            );
+          }
           if (w) {
             if (w.length > 1) {
               imageData.data.set(w, index);
-              imageData2.data.set(
-                [
-                  ox + 127.5 | 0,
-                  oy + 127.5 | 0,
-                  r | 0,
-                ],
-                index,
-              );
-
             } else {
               imageData2.data.set(w, index + 3);
             }

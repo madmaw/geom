@@ -4,6 +4,9 @@ import { EPSILON } from "./constants";
 // normalized direction, point
 export type Line = readonly [ReadonlyVec2, ReadonlyVec2];
 
+// p1, p2, p2 rotated -a around p1, a 
+export type FiniteLine = readonly [ReadonlyVec3, ReadonlyVec2, number];
+
 export function toLine(p1: ReadonlyVec3, p2: ReadonlyVec3): Line {
   const delta = vec2.normalize(
     vec2.create(),
@@ -13,7 +16,20 @@ export function toLine(p1: ReadonlyVec3, p2: ReadonlyVec3): Line {
       p1 as ReadonlyVec2,
     ),
   );
-    return [delta, p1 as ReadonlyVec2];
+  return [delta, p1 as ReadonlyVec2];
+}
+
+export function toFiniteLine(p1: ReadonlyVec3, p2: ReadonlyVec3): FiniteLine {
+  const [px1, py1] = p1;
+  const [px2, py2] = p2;
+  const a = Math.atan2(py2 - py1, px2 - px1);
+  const rp2 = vec2.rotate(vec2.create(), p2 as ReadonlyVec2, p1 as ReadonlyVec2, -a);
+
+  return [
+    p1,
+    rp2,
+    a,
+  ];
 }
 
 export function lineIntersectsPoints(p1: ReadonlyVec3, p2: ReadonlyVec3, line1: Line): number | false {
@@ -62,13 +78,10 @@ export function  lineIntersection(
   return rdy/rny1;
 }
 
-export function closestLinePointVector([p1, p2]: Line, p: ReadonlyVec2): ReadonlyVec2 {
+export function closestLinePointVector([p1, rp2, a]: FiniteLine, p: ReadonlyVec2): ReadonlyVec2 {
   const [px1, py1] = p1;
-  const [px2, py2] = p2;
-  const a = Math.atan2(py2 - py1, px2 - px1);
-  const rp2 = vec2.rotate(vec2.create(), p2, p1, -a);
   const [rpx2, rpy2] = rp2;
-  const [rpx, rpy] = vec2.rotate(vec2.create(), p, p1, -a);
+  const [rpx, rpy] = vec2.rotate(vec2.create(), p, p1 as ReadonlyVec2, -a);
   let cx: number;
   let cy: number;
   if (rpx < px1) {

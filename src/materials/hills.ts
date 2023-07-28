@@ -5,10 +5,9 @@ import { DEPTH_RANGE } from "../constants";
 export function hillFeature(scale: number): FeatureFactory {
   return function(maxr: number, z: number) {
     const maxDepth = scale * maxr;
-    return function(v: Uint8ClampedArray, dx: number, dy: number) {
+    return function(dx: number, dy: number, c: number, existingDepth: number) {
       const r = Math.sqrt(dx * dx + dy * dy);
       if (r < maxr) {
-        const existingDepth = v[2];
         const a = r * Math.PI/maxr;
         
         const depth = (Math.cos(a) + 1) * maxDepth/2;

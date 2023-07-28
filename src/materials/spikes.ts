@@ -12,12 +12,11 @@ export function spikeFeature(
     const axy = Math.atan2(d, r);
     const cosaxy = Math.cos(axy);
     const sinaxy = Math.sin(axy);
-    return function (v: Uint8ClampedArray, dx: number, dy: number) {
+    return function (dx: number, dy: number, c: number, existingDepth: number) {
       const dxysq = dx * dx + dy * dy;
       if (dxysq < r * r) {
         const depth = (1 - Math.sqrt(dxysq)/r) * d;
         const depthValue = z + depth / (DEPTH_RANGE * 2);
-        const existingDepth = v[2];
         if (depthValue > existingDepth) {
           const az = Math.atan2(dy, dx);
           const [nx, ny] = vec3.normalize(

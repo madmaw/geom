@@ -10,9 +10,9 @@ import { riverStonesFactory } from "./materials/river_stones";
 import { craterFeature } from "./materials/craters";
 import { staticFactory } from "./materials/static";
 import { round } from "./geometry/round";
-import { DEPTH_RANGE, MATERIAL_TEXTURE_DIMENSION, THREE_WAY_NORMALS } from "./constants";
+import { DEPTH_RANGE, MATERIAL_TEXTURE_DIMENSION } from "./constants";
 import { spikeFeature } from "./materials/spikes";
-import { Line, closestLinePointVector, lineDeltaAndLength, lineIntersection, lineIntersectsPoints, toLine } from "./geometry/line";
+import { Line, closestLinePointVector, lineDeltaAndLength, lineIntersection, lineIntersectsPoints, toFiniteLine, toLine } from "./geometry/line";
 import { hillFeature } from "./materials/hills";
 
 type MaybeInvertedFace = Face & {
@@ -149,10 +149,10 @@ const FRAGMENT_SHADER = `#version 300 es
         p.xy * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.z + ${V_PLANE_POSITION}.zw
       );
 
-      float surfaceDepth = (tm1.z - .5) * ${DEPTH_RANGE} * depthScale; 
+      float surfaceDepth = (tm1.z - .5) ${DEPTH_RANGE == 1 ? '' : ` * ${DEPTH_RANGE}`} * depthScale; 
       if (surfaceDepth > depth && tl.a > .5) {
         float d0 = depth + ${STEP};
-        float s0 = d0 - (tm.z - .5) * ${DEPTH_RANGE} * depthScale;
+        float s0 = d0 - (tm.z - .5) ${DEPTH_RANGE == 1 ? '' : ` * ${DEPTH_RANGE}`} * depthScale;
         float s1 = d0 - surfaceDepth;
         //float w = ${STEP} * s/c;
         float divisor = ${STEP} - s1 + s0;
@@ -182,8 +182,11 @@ const FRAGMENT_SHADER = `#version 300 es
     vec2 n = tm.xy * 2. - 1.;
     vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
     vec4 color = ${U_MATERIAL_COLOR_BASE}
-      + ${U_MATERIAL_COLOR_FEATURE} * (tm.a * 2. - 1.)
-      + ${U_MATERIAL_COLOR_SURFACE} * (td.a * 2. - 1.);
+      + mix(
+        ${U_MATERIAL_COLOR_FEATURE} * (tm.a * 2. - 1.),
+        ${U_MATERIAL_COLOR_SURFACE} * (td.a * 2. - 1.),
+        abs(td.a * 2. - 1.)
+      );
     ${O_COLOR} = vec4(
       mix(
         color.rgb * pow(max(0., (dot(m, normalize(vec3(1, 2, 3)))+1.)/2.), color.a * 2.),
@@ -370,8 +373,8 @@ window.onload = () => {
     // [shape5, [shape6]],
     // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, []],
-    [disc, columns],
-    //[roundedCube1, []],
+    //[disc, columns],
+    [roundedCube1, []],
     //[sphere, []],
     //[sphere, [column]],
     //[column, []],
@@ -582,43 +585,42 @@ window.onload = () => {
   const materials: Material[][] = [
     [],
     [
-      featureMaterial(staticFactory(99), 50, 9999, clusteredDistributionFactory(
+      featureMaterial(staticFactory(99), 50, 2999, clusteredDistributionFactory(
         20,
         50,
         1,
         5,
         .8, 
         4
-      )),
+      ), true),
     ],
     [
-      featureMaterial(riverStonesFactory(.6), 60, 2999, randomDistributionFactory(.9, 2)),
-      featureMaterial(staticFactory(40), 4, 4999, randomDistributionFactory(.5, 1)),
+      featureMaterial(riverStonesFactory(.6), 40, 699, randomDistributionFactory(.9, 2)),
+      featureMaterial(staticFactory(40), 4, 999, randomDistributionFactory(.5, 1), true),
     ],
     [
-      featureMaterial(hillFeature(.5), 299, 99, randomDistributionFactory(.9, 2)),
+      featureMaterial(hillFeature(1), 99, 99, randomDistributionFactory(.9, 2)),
     ],
     [
-      featureMaterial(hillFeature(-.5), 99, 999, randomDistributionFactory(.9, 2)),
-      featureMaterial(staticFactory(99), 9, 4999, randomDistributionFactory(.9, 1)),
+      featureMaterial(hillFeature(-.5), 99, 99, randomDistributionFactory(.9, 2)),
+      featureMaterial(staticFactory(99), 9, 999, randomDistributionFactory(.9, 1), true),
     ],
     [
-      featureMaterial(staticFactory(99), 9, 4999, randomDistributionFactory(.9, 1)),
-      featureMaterial(riverStonesFactory(1), 39, 399, evenDistributionFactory(99)),
+      featureMaterial(riverStonesFactory(1), 19, 99, evenDistributionFactory(49)),
     ],
     [
-      featureMaterial(staticFactory(40), 99, 4999, randomDistributionFactory(.9, 2)),
-      featureMaterial(craterFeature(59), 99, 999, clusteredDistributionFactory(
-        99,
-        99,
+      featureMaterial(staticFactory(40), 99, 999, randomDistributionFactory(.9, 2), true),
+      featureMaterial(craterFeature(59), 49, 199, clusteredDistributionFactory(
+        19,
+        19,
         0,
-        9,
-        1, 
+        5,
+        .8, 
         3,
       )),
     ],
     [
-      featureMaterial(spikeFeature(2, 1, 99), 60, 999, clusteredDistributionFactory(
+      featureMaterial(spikeFeature(3, 2, 99), 30, 99, clusteredDistributionFactory(
         9,
         99,
         1,
@@ -626,7 +628,7 @@ window.onload = () => {
         .3, 
         9,
       )),
-      featureMaterial(staticFactory(40), 9, 1999, randomDistributionFactory(.5, 1)),
+      featureMaterial(staticFactory(40), 9, 999, randomDistributionFactory(.5, 1), true),
     ],
   ];
   const materialCanvases = materials.map((materials, i) => {
@@ -637,7 +639,7 @@ window.onload = () => {
       willReadFrequently: true,
     });
     // nx = 0, ny = 0, depth = 0, feature color = 0
-    ctx.fillStyle = 'rgba(127,127,127,.5)';
+    ctx.fillStyle = 'rgba(127,127,128,.5)';
     ctx.fillRect(0, 0, MATERIAL_TEXTURE_DIMENSION, MATERIAL_TEXTURE_DIMENSION);
 
     const materialCanvas2 = document.getElementById('canvasDistance'+i) as HTMLCanvasElement || document.createElement('canvas');
@@ -755,14 +757,15 @@ window.onload = () => {
 
         const imageData = ctx.getImageData(originalTextureX, textureY, width, height);
         const keyPointsAndlines = [...lineConnections].map(worldPoints => {
-          const line: Line = worldPoints.map(worldPoint => {
+          const linePoints: [ReadonlyVec3, ReadonlyVec3] = worldPoints.map(worldPoint => {
             return vec3.transformMat4(
               vec3.create(),
               worldPoint,
               fromWorldCoordinates,
             );
           }) as any;
-          return [worldPoints[0], line] as const;
+          const finiteLine = toFiniteLine(...linePoints);
+          return [worldPoints[0], finiteLine] as const;
         });
         for(let py=0; py<height; py++) {
           const y = (py - lineTextureBuffer + .5)/lineTextureScale + minY;
@@ -1024,7 +1027,7 @@ window.onload = () => {
         gl.uniform4f(uLineColor, Math.random(), Math.random(), Math.random(), 1);
         break;
       case 'f':
-        gl.uniform4f(uMaterialColorFeature, Math.random()/2, Math.random()/2, Math.random()/2, Math.random());
+        gl.uniform4f(uMaterialColorFeature, Math.random(), Math.random(), Math.random(), Math.random());
         break;
       case 'z':
         lineExponent*=1.2;
@@ -1057,7 +1060,7 @@ window.onload = () => {
 
   let lineScale = 1;
   let lineExponent = 50;
-  let materialScale = MATERIAL_DEPTH_SCALE;
+  let materialScale = .25;
   function setLineScaleExponentMaterialScale() {
     gl.uniform3f(
       uLineScaleExponentMaterialScale,

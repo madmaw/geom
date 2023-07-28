@@ -5,8 +5,7 @@ export function staticFactory(
 ): SurfaceFactory {
   return function() {
     const delta = Math.random() * range * 2 - range;
-    return function(v: Uint8ClampedArray) {
-      const c = v[3];
+    return function(dx: number, dy: number, c: number) {
       return [Math.max(127, Math.min(255, c + delta)) | 0];
     };
   };
