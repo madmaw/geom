@@ -34,7 +34,7 @@ export function hillFeature(scale: number): FeatureFactory {
             (nx + 1) * 127 | 0,
             (ny + 1) * 127 | 0,
             depthValue | 0,
-            depthValue | 0
+            z + depth * 2 / DEPTH_RANGE | 0
           ];
         }
       }

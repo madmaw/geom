@@ -181,11 +181,11 @@ const FRAGMENT_SHADER = `#version 300 es
 
     vec2 n = tm.xy * 2. - 1.;
     vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
-    vec4 color = ${U_MATERIAL_COLOR_BASE}
+    vec4 color = 
       + mix(
+        ${U_MATERIAL_COLOR_BASE} + ${U_MATERIAL_COLOR_SURFACE} * (td.a * 2. - 1.),
         ${U_MATERIAL_COLOR_FEATURE} * (tm.a * 2. - 1.),
-        ${U_MATERIAL_COLOR_SURFACE} * (td.a * 2. - 1.),
-        abs(td.a * 2. - 1.)
+        abs(tm.a * 2. - 1.)
       );
     ${O_COLOR} = vec4(
       mix(
