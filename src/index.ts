@@ -22,8 +22,8 @@ type MaybeInvertedFace = Face & {
 const LINE_TEXTURE_DIMENSION = 4096;
 //const LINE_TEXTURE_DIMENSION = 1024;
 //const LINE_TEXTURE_SCALE = 80;
-//const c = 64/4096;
-const LINE_TEXTURE_PROPORTION = 64/LINE_TEXTURE_DIMENSION;
+//const c = 64/4096;  
+const LINE_TEXTURE_PROPORTION = 96/LINE_TEXTURE_DIMENSION;
 //const LINE_TEXTURE_BUFFER = LINE_TEXTURE_SCALE/2;
 const BORDER_EXPAND = .02;
 //const MATERIAL_TEXTURE_DIMENSION = 4096;
@@ -33,6 +33,7 @@ const MATERIAL_OFFSET_SCALE = 256/MATERIAL_TEXTURE_DIMENSION;
 const A_VERTEX_WORLD_POSITION = "aVertexWorldPosition";
 const A_VERTEX_PLANE_POSITION = 'aVertexPlanePosition';
 const A_VERTEX_PLANE_ROTATION_MATRIX = 'aVertexPlaneRotation';
+const A_VERTEX_NORMAL_ROTATION_MATRIX = 'aVertexNormalRotation';
 const A_VERTEX_LINE_TEXTURE_OFFSET = 'aVertexLineTextureCoord';
 
 const U_MODEL_VIEW_MATRIX = "uModelView";
@@ -51,7 +52,8 @@ const U_CAMERA_POSITION = 'uCameraPosition';
 const V_PLANE_POSITION = 'vPlanePosition';
 const V_WORLD_POSITION = 'vWorldPosition';
 const V_NORMAL = 'vNormal';
-const V_PLANE_ROTATION_MATRIX = 'vPlaneTransform';
+const V_PLANE_ROTATION_MATRIX = 'vPlaneRotation';
+const V_NORMAL_ROTATION_MATRIX = 'vNormalRotation';
 const V_INVERSE_PLANE_WORLD_ROTATION_MATRIX = 'vInversePlaneWorld';
 const V_LINE_TEXTURE_COORD = 'vLineTextureCoord';
 
@@ -63,6 +65,7 @@ const VERTEX_SHADER = `#version 300 es
   in vec4 ${A_VERTEX_WORLD_POSITION};
   in vec4 ${A_VERTEX_PLANE_POSITION};
   in mat4 ${A_VERTEX_PLANE_ROTATION_MATRIX};
+  in mat4 ${A_VERTEX_NORMAL_ROTATION_MATRIX};
   in vec2 ${A_VERTEX_LINE_TEXTURE_OFFSET};
   uniform mat4 ${U_MODEL_VIEW_MATRIX};
   uniform mat4 ${U_MODEL_ROTATION_MATRIX};
@@ -71,6 +74,7 @@ const VERTEX_SHADER = `#version 300 es
   out vec4 ${V_WORLD_POSITION};
   out vec4 ${V_PLANE_POSITION};
   out mat4 ${V_PLANE_ROTATION_MATRIX};
+  out mat4 ${V_NORMAL_ROTATION_MATRIX};
   out mat4 ${V_INVERSE_PLANE_WORLD_ROTATION_MATRIX};
   out vec2 ${V_LINE_TEXTURE_COORD};
 
@@ -80,6 +84,7 @@ const VERTEX_SHADER = `#version 300 es
     ${V_LINE_TEXTURE_COORD} = ${A_VERTEX_LINE_TEXTURE_OFFSET};
     ${V_NORMAL} = ${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_PLANE_ROTATION_MATRIX} * vec4(0., 0., 1., 1.);
     ${V_PLANE_ROTATION_MATRIX} = ${A_VERTEX_PLANE_ROTATION_MATRIX};
+    ${V_NORMAL_ROTATION_MATRIX} = ${A_VERTEX_NORMAL_ROTATION_MATRIX};
     ${V_INVERSE_PLANE_WORLD_ROTATION_MATRIX} = inverse(${U_MODEL_ROTATION_MATRIX} * ${A_VERTEX_PLANE_ROTATION_MATRIX});
 
     gl_Position = ${U_PROJECTION_MATRIX} * ${V_WORLD_POSITION};
@@ -96,6 +101,7 @@ const FRAGMENT_SHADER = `#version 300 es
   in vec4 ${V_WORLD_POSITION};
   in vec4 ${V_NORMAL};
   in mat4 ${V_PLANE_ROTATION_MATRIX};
+  in mat4 ${V_NORMAL_ROTATION_MATRIX};
   in mat4 ${V_INVERSE_PLANE_WORLD_ROTATION_MATRIX};
   in vec2 ${V_LINE_TEXTURE_COORD};
   uniform sampler2D ${U_LINE_TEXTURE};
@@ -180,9 +186,9 @@ const FRAGMENT_SHADER = `#version 300 es
     }
 
     vec2 n = tm.xy * 2. - 1.;
-    vec3 m = (${V_PLANE_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
+    vec3 m = normalize(${V_PLANE_ROTATION_MATRIX} * ${V_NORMAL_ROTATION_MATRIX} * vec4(n, pow(1. - length(n), 2.), 1)).xyz;
     vec4 color = 
-      + mix(
+      mix(
         ${U_MATERIAL_COLOR_BASE} + ${U_MATERIAL_COLOR_SURFACE} * (td.a * 2. - 1.),
         ${U_MATERIAL_COLOR_FEATURE} * (tm.a * 2. - 1.),
         abs(tm.a * 2. - 1.)
@@ -297,10 +303,10 @@ window.onload = () => {
   const roundedCube1 = round(round(cube, -1, false), -.8, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
-  // const segmentsz = 16;
-  // const segmentsy = 8;
-  const segmentsz = 6;
-  const segmentsy = 2;
+  const segmentsz = 16;
+  const segmentsy = 8;
+  // const segmentsz = 6;
+  // const segmentsy = 2;
   const ry = .6;
   const rz = 2;
   const hole = rz;
@@ -374,8 +380,8 @@ window.onload = () => {
     // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, []],
     //[disc, columns],
-    [roundedCube1, []],
-    //[sphere, []],
+    //[roundedCube1, []],
+    [sphere, []],
     //[sphere, [column]],
     //[column, []],
     //[columns[0], []],
@@ -485,12 +491,14 @@ window.onload = () => {
   const [
     aWorldPosition,
     aPlanePosition,
-    aNormalTransform,
+    aPlaneRotation,
+    aNormalRotation,
     aLineTextureOffset,
   ] = [
     A_VERTEX_WORLD_POSITION,
     A_VERTEX_PLANE_POSITION,
     A_VERTEX_PLANE_ROTATION_MATRIX,
+    A_VERTEX_NORMAL_ROTATION_MATRIX,
     A_VERTEX_LINE_TEXTURE_OFFSET,
   ].map(
     attribute => gl.getAttribLocation(program, attribute)
@@ -599,17 +607,15 @@ window.onload = () => {
       featureMaterial(staticFactory(40), 4, 999, randomDistributionFactory(.5, 1), true),
     ],
     [
-      featureMaterial(hillFeature(1), 99, 99, randomDistributionFactory(.9, 2)),
-    ],
-    [
-      featureMaterial(hillFeature(-.5), 99, 99, randomDistributionFactory(.9, 2)),
+      featureMaterial(hillFeature(.4), 50, 499, randomDistributionFactory(.9, 2)),
+      featureMaterial(hillFeature(-.3), 30, 299, randomDistributionFactory(.9, 2)),
       featureMaterial(staticFactory(99), 9, 999, randomDistributionFactory(.9, 1), true),
     ],
     [
       featureMaterial(riverStonesFactory(1), 19, 99, evenDistributionFactory(49)),
     ],
     [
-      featureMaterial(staticFactory(40), 99, 999, randomDistributionFactory(.9, 2), true),
+      featureMaterial(staticFactory(40), 9, 2999, randomDistributionFactory(.9, 2), true),
       featureMaterial(craterFeature(59), 49, 199, clusteredDistributionFactory(
         19,
         19,
@@ -668,7 +674,8 @@ window.onload = () => {
   const [
     worldPoints,
     planePoints,
-    normalTransforms,
+    planeRotations,
+    normalRotations,
     lineTextureOffsets,
     indices,
   ] = faces.reduce<[
@@ -676,14 +683,16 @@ window.onload = () => {
     [number, number, number][],
     // plane position points
     [number, number, number, number][],
-    // mat4 normal transforms
+    // mat4 plane rotation
+    [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number][],
+    // mat4 normal rotation
     [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number][],
     // line texture offsets
     [number, number][],
     // indices
     number[],
   ]>(
-    ([worldPoints, planePoints, normalTransforms, lineTextureOffsets, indices], face) => {
+    ([worldPoints, planePoints, planeRotations, normalRotations, lineTextureOffsets, indices], face) => {
       const {
         polygons,
         toWorldCoordinates,
@@ -691,6 +700,7 @@ window.onload = () => {
         inverted = 0,
       } = face;
       const fromWorldCoordinates = mat4.invert(mat4.create(), toWorldCoordinates);
+      const rotateFromWorldCoordinates = mat4.invert(mat4.create(), rotateToWorldCoordinates);
 
       const polygonPoints = polygons.flat(1);
       const [[minX, minY], [maxX, maxY]] = polygonPoints.reduce<[[number, number, number], [number, number, number]]>(([min, max], point) => {
@@ -806,8 +816,35 @@ window.onload = () => {
         return inverted ? [0, 0] : [x, y];
       });
 
-      const newNormalTransforms = uniquePoints.map(() => {
+      const newPlaneRotations = uniquePoints.map(() => {
         return [...rotateToWorldCoordinates] as any;
+      });
+      const newNormalRotations = uniquePoints.map(worldPoint => {
+        //return [...mat4.identity(mat4.create())] as any;
+        const faces = pointFaces.get(worldPoint);
+        const combined = [...faces].reduce<vec3>((acc, {
+          rotateToWorldCoordinates
+        }) => {
+          const faceNormal = vec3.transformMat4(vec3.create(), NORMAL_Z, rotateToWorldCoordinates);
+          return vec3.add(vec3.create(), acc, faceNormal);
+        }, [0, 0, 0]);
+        const normal = vec3.normalize(vec3.create(), combined);
+        // rotate the normal back to the face coordinates
+        const planeNormal = vec3.transformMat4(vec3.create(), normal, rotateFromWorldCoordinates);
+        const cosa = vec3.dot(NORMAL_Z, planeNormal);
+        const a = Math.acos(cosa);
+        const transform = Math.abs(a) > EPSILON
+          ? mat4.rotate(
+            mat4.create(),
+            mat4.identity(mat4.create()),
+            a,
+            vec3.normalize(
+              vec3.create(),
+              vec3.cross(vec3.create(), NORMAL_Z, planeNormal),
+            )
+          )
+          : mat4.identity(mat4.create());
+        return [...transform] as any;
       });
       const dx = Math.random();
       const dy = Math.random();
@@ -832,12 +869,13 @@ window.onload = () => {
       return [
         [...worldPoints, ...uniquePoints],
         [...planePoints, ...newPlanePoints],
-        [...normalTransforms, ...newNormalTransforms],
+        [...planeRotations, ...newPlaneRotations],
+        [...normalRotations, ...newNormalRotations],
         [...lineTextureOffsets, ...newLineTextureOffsets],
         [...indices, ...newIndices],
       ];
     },
-    [[], [], [], [], []],
+    [[], [], [], [], [], []],
   );
 
   [
@@ -865,7 +903,8 @@ window.onload = () => {
   ([
     [aWorldPosition, worldPoints],
     [aPlanePosition, planePoints],
-    [aNormalTransform, normalTransforms],
+    [aPlaneRotation, planeRotations],
+    [aNormalRotation, normalRotations],
     [aLineTextureOffset, lineTextureOffsets],
   ] as const).forEach(([attribute, vectors]) => {
     var buffer = gl.createBuffer();
