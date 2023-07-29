@@ -24,6 +24,7 @@ const LINE_TEXTURE_DIMENSION = 4096;
 //const LINE_TEXTURE_SCALE = 80;
 //const c = 64/4096;  
 const LINE_TEXTURE_PROPORTION = 96/LINE_TEXTURE_DIMENSION;
+const MAX_LINE_DISTANCE = 1;
 //const LINE_TEXTURE_BUFFER = LINE_TEXTURE_SCALE/2;
 const BORDER_EXPAND = .02;
 //const MATERIAL_TEXTURE_DIMENSION = 4096;
@@ -150,7 +151,7 @@ const FRAGMENT_SHADER = `#version 300 es
         ${U_LINE_TEXTURE},
         ${V_LINE_TEXTURE_COORD} + cp * ${LINE_TEXTURE_PROPORTION}
       );
-      vec4 tm1 = tc.r < r ? vec4(.5) : texture(
+      vec4 tm1 = tc.r * ${MAX_LINE_DISTANCE}. < r ? vec4(.5) : texture(
         ${U_MATERIAL_TEXTURE},
         p.xy * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.z + ${V_PLANE_POSITION}.zw
       );
@@ -171,7 +172,7 @@ const FRAGMENT_SHADER = `#version 300 es
         count = ${NUM_STEPS};
       }
       // TODO do we need to update tc with the new p?
-      tm = tc.r < r ? vec4(.5) : texture(
+      tm = tc.r * ${MAX_LINE_DISTANCE}. < r ? vec4(.5) : texture(
         ${U_MATERIAL_TEXTURE},
         p.xy * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.z + ${V_PLANE_POSITION}.zw
       );  
@@ -204,9 +205,9 @@ const FRAGMENT_SHADER = `#version 300 es
         //tl.xyz,
         //0.
         pow(
-          (1. - tl.g) * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.x,
+          (1. - tl.g),
           ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.y
-        )
+        ) * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.x
       ),
       1
     );
@@ -449,9 +450,9 @@ window.onload = () => {
   });
 
   // get context loss if the textures are too big
-  //const lineTextureDimension: number = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), 8192);
+  const lineTextureDimension: number = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), LINE_TEXTURE_DIMENSION);
   //const lineTextureDimension: number = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-  const lineTextureDimension = LINE_TEXTURE_DIMENSION;
+  //const lineTextureDimension = LINE_TEXTURE_DIMENSION;
   const lineTextureScale = lineTextureDimension * LINE_TEXTURE_PROPORTION;
   const lineTextureBuffer = lineTextureScale / 2;
   const baseLineWidth = lineTextureDimension/LINE_TEXTURE_DIMENSION;
@@ -607,7 +608,7 @@ window.onload = () => {
       featureMaterial(staticFactory(40), 4, 999, randomDistributionFactory(.5, 1), true),
     ],
     [
-      featureMaterial(hillFeature(.4), 50, 499, randomDistributionFactory(.9, 2)),
+      featureMaterial(hillFeature(.4), 50, 499, randomDistributionFactory(.5, 2)),
       featureMaterial(hillFeature(-.3), 30, 299, randomDistributionFactory(.9, 2)),
       featureMaterial(staticFactory(99), 9, 999, randomDistributionFactory(.9, 1), true),
     ],
@@ -616,6 +617,7 @@ window.onload = () => {
     ],
     [
       featureMaterial(staticFactory(40), 9, 2999, randomDistributionFactory(.9, 2), true),
+      featureMaterial(hillFeature(.4), 50, 499, randomDistributionFactory(.5, 2)),
       featureMaterial(craterFeature(59), 49, 199, clusteredDistributionFactory(
         19,
         19,
@@ -626,7 +628,7 @@ window.onload = () => {
       )),
     ],
     [
-      featureMaterial(spikeFeature(3, 2, 99), 30, 99, clusteredDistributionFactory(
+      featureMaterial(spikeFeature(3, 2, 99), 30, 599, clusteredDistributionFactory(
         9,
         99,
         1,
@@ -784,8 +786,8 @@ window.onload = () => {
             const index = (py * width + px) * 4;
             // for performance reasons, only perform this calculation if the pixel is filled 
             if (imageData.data[index + 3]) {
-              let minLine = 1;
-              let minEdge = 1;
+              let minLine = MAX_LINE_DISTANCE;
+              let minEdge = MAX_LINE_DISTANCE;
               keyPointsAndlines.forEach(([keyPoint, line]) => {
                 const d = vec2.length(closestLinePointVector(line, [x, y]));
                 minEdge = Math.min(minEdge, d);
@@ -793,7 +795,7 @@ window.onload = () => {
                   minLine = Math.min(minLine, d);
                 }
               });
-              imageData.data.set([minEdge * 255 | 0, minLine * 255 | 0], index);                
+              imageData.data.set([minEdge * 255/MAX_LINE_DISTANCE | 0, minLine * 255/MAX_LINE_DISTANCE | 0], index);                
             }
           }
         }
