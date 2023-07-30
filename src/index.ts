@@ -23,7 +23,7 @@ const LINE_TEXTURE_DIMENSION = 4096;
 //const LINE_TEXTURE_DIMENSION = 1024;
 //const LINE_TEXTURE_SCALE = 80;
 //const c = 64/4096;  
-const LINE_TEXTURE_PROPORTION = 96/LINE_TEXTURE_DIMENSION;
+const LINE_TEXTURE_PROPORTION = 64/LINE_TEXTURE_DIMENSION;
 const MAX_LINE_DISTANCE = 1;
 //const LINE_TEXTURE_BUFFER = LINE_TEXTURE_SCALE/2;
 const BORDER_EXPAND = .02;
@@ -194,9 +194,17 @@ const FRAGMENT_SHADER = `#version 300 es
         ${U_MATERIAL_COLOR_FEATURE} * (tm.a * 2. - 1.),
         abs(tm.a * 2. - 1.)
       );
+    float lighting = max(
+      0., 
+      (dot(m, normalize(vec3(1, 2, 3)))+1.)/2.
+    );
     ${O_COLOR} = vec4(
       mix(
-        color.rgb * pow(max(0., (dot(m, normalize(vec3(1, 2, 3)))+1.)/2.), color.a * 2.),
+        color.rgb * pow(
+          lighting,
+          //color.a * 2.
+          1.
+        ),
         //tm.xyz,
         //(p.xyz + 1.)/2.,
         //vec3(depth + .5) * 2.,
@@ -207,7 +215,7 @@ const FRAGMENT_SHADER = `#version 300 es
         pow(
           (1. - tl.g),
           ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.y
-        ) * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.x
+        ) * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.x * (1. - lighting)
       ),
       1
     );
@@ -380,7 +388,7 @@ window.onload = () => {
     // [shape5, [shape6]],
     // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, []],
-    //[disc, columns],
+    // [disc, columns],
     //[roundedCube1, []],
     [sphere, []],
     //[sphere, [column]],
@@ -617,7 +625,7 @@ window.onload = () => {
     ],
     [
       featureMaterial(staticFactory(40), 9, 2999, randomDistributionFactory(.9, 2), true),
-      featureMaterial(hillFeature(.4), 50, 499, randomDistributionFactory(.5, 2)),
+      featureMaterial(hillFeature(.4), 50, 299, randomDistributionFactory(.5, 2)),
       featureMaterial(craterFeature(59), 49, 199, clusteredDistributionFactory(
         19,
         19,
