@@ -198,27 +198,25 @@ const FRAGMENT_SHADER = `#version 300 es
       0., 
       (dot(m, normalize(vec3(1, 2, 3)))+1.)/2.
     );
-    ${O_COLOR} = vec4(
-      mix(
-        color.rgb * pow(
-          lighting,
-          //color.a * 2.
-          1.
-        ),
-        //tm.xyz,
-        //(p.xyz + 1.)/2.,
-        //vec3(depth + .5) * 2.,
-        //vec3(count/${NUM_STEPS}),
-        ${U_LINE_COLOR}.rgb,
-        //tl.xyz,
-        //0.
-        pow(
-          (1. - tl.g),
-          ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.y
-        ) * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.x * (1. - lighting)
+    vec3 fc = mix(
+      color.rgb * pow(
+        lighting,
+        //color.a * 2.
+        1.
       ),
-      1
+      //tm.xyz,
+      //(p.xyz + 1.)/2.,
+      //vec3(depth + .5) * 2.,
+      //vec3(count/${NUM_STEPS}),
+      ${U_LINE_COLOR}.rgb,
+      //tl.xyz,
+      //0.
+      pow(
+        (1. - tl.g),
+        ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.y
+      ) * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.x * (1. - lighting)
     );
+    ${O_COLOR} = vec4(pow(fc, vec3(.6)), 1);
   }
 `;
 
@@ -902,7 +900,8 @@ window.onload = () => {
       gl.TEXTURE_2D,
       gl.TEXTURE_MIN_FILTER,
       //images.length > 1 ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR,
-      gl.LINEAR,
+      //gl.LINEAR,
+      gl.NEAREST
     );
   });
 
