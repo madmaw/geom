@@ -216,7 +216,8 @@ const FRAGMENT_SHADER = `#version 300 es
         ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.y
       ) * ${U_LINE_SCALE_EXPONENT_MATERIAL_SCALE}.x * (1. - lighting)
     );
-    ${O_COLOR} = vec4(pow(fc, vec3(.6)), 1);
+    // bad gamma correction
+    ${O_COLOR} = vec4(sqrt(fc), 1);
   }
 `;
 
@@ -768,7 +769,7 @@ window.onload = () => {
           ctx.closePath();
           ctx.fill();
           // TODO baseLineWidth is probably 1, so can be removed
-          ctx.lineWidth = baseLineWidth;
+          ctx.lineWidth = baseLineWidth * 8;
           //ctx.strokeStyle = '#000';
           ctx.stroke();
         });
