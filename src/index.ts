@@ -310,10 +310,10 @@ window.onload = () => {
   const roundedCube1 = round(round(cube, -1, false), -.8, true);
   const roundedCube2 = convexShapeExpand(roundedCube1, .1)
   
-  const segmentsz = 16;
-  const segmentsy = 8;
-  // const segmentsz = 6;
-  // const segmentsy = 2;
+  // const segmentsz = 16;
+  // const segmentsy = 8;
+  const segmentsz = 6;
+  const segmentsy = 2;
   const ry = .6;
   const rz = 2;
   const hole = rz;
@@ -386,9 +386,9 @@ window.onload = () => {
     // [shape5, [shape6]],
     // [shape1, [shape2, shape3, shape4, shape6]],
     //[disc, []],
-    // [disc, columns],
+    [disc, columns],
     //[roundedCube1, []],
-    [sphere, []],
+    //[sphere, []],
     //[sphere, [column]],
     //[column, []],
     //[columns[0], []],
